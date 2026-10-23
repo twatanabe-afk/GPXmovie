@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GPS Tracker & GPX Ghost Player</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    
+    <!-- FontAwesome CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    
+    <!-- JSZip for KMZ extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <!-- toGeoJSON for KML/KMZ to GeoJSON conversion -->
+    <script src="https://unpkg.com/@tmcw/togeojson@5.5.0/dist/togeojson.umd.js"></script>
+
+    <style>
+        html, body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0f172a;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #map {
+            width: 100%;
+            height: 100vh;
+            z-index: 1;
+            background-color: #1e293b;
+        }
+
+        /* Glassmorphism UI Style */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Current position pulsing dot animation */
+        .user-pulse-marker {
+            position: relative;
+        }
+        .user-pulse-marker::after {
+            content: '';
+            position: absolute;
+            width: 26px;
+            height: 26px;
+            top: -7px;
+            left: -7px;
+            border-radius: 50%;
+            background-color: rgba(239, 68, 68, 0.6);
+            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.5); opacity: 1; }
+            100% { transform: scale(2.2); opacity: 0; }
+        }
+
+        /* Ghost Marker Cyan Glow */
+        .ghost-marker-icon {
+            font-size: 26px;
+            text-align: center;
+            line-height: 26px;
+            filter: drop-shadow(0 0 8px #00d2ff) drop-shadow(0 0 15px #00d2ff);
+            animation: ghost-float 2s ease-in-out infinite alternate;
+        }
+        @keyframes ghost-float {
+            0% { transform: translateY(0px); }
+            100% { transform: translateY(-4px); }
+        }
+
+        /* Checkpoint Icons */
+        .checkpoint-icon {
+            font-size: 22px;
+            text-align: center;
+            line-height: 22px;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+        }
+
+        /* Hide default Leaflet Zoom controls */
+        .leaflet-control-zoom {
+            display: none !important;
+        }
+
+        input[type=range] {
+            accent-color: #3b82f6;
+        }
+
+        /* Camera PIP Video Styling */
+        #camera-preview-container {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="text-slate-100 flex flex-col h-screen w-screen overflow-hidden">
+
+    <!-- Fullscreen Leaflet Map -->
+    <div id="map"></div>
+
+    <!-- TOP CENTER: VS Race Dashboard Panel -->
+    <div class="fixed top-3 left-1/2 -translate-x-1/2 z-20 w-[92%] max-w-md glass-panel rounded-2xl p-3 text-center">
+        <div class="grid grid-cols-3 gap-2 border-b border-slate-700/60 pb-2 mb-2">
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">TIME GAP</div>
+                <div id="dash-time-gap" class="text-lg font-bold text-slate-200">-- : --</div>
+            </div>
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">DIST GAP</div>
+                <div id="dash-dist-gap" class="text-lg font-bold text-slate-200">-- m</div>
+            </div>
+            <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">SPEED (YOU / 👻)</div>
+                <div id="dash-speeds" class="text-sm font-bold text-slate-200 mt-1">0.0 / 0.0 <span class="text-[10px] text-slate-400 font-normal">km/h</span></div>
+            </div>
+        </div>
+
+        <!-- Checkpoint / Race Status -->
+        <div class="flex items-center justify-between text-xs px-1 text-slate-300">
+            <div id="status-start" class="flex items-center gap-1">
+                <span>🏁 S:</span> <span class="text-slate-400 font-mono">未設定</span>
+            </div>
+            <div id="status-race-state" class="font-bold text-yellow-400 text-xs px-2 py-0.5 rounded bg-yellow-400/10 border border-yellow-400/20">
+                待機中
+            </div>
+            <div id="status-finish" class="flex items-center gap-1">
+                <span>🚩 G:</span> <span class="text-slate-400 font-mono">未設定</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Camera Picture-in-Picture Viewfinder -->
+    <div id="camera-preview-container" class="fixed top-[135px] left-3 z-20 w-36 h-48 glass-panel rounded-2xl overflow-hidden shadow-2xl border border-slate-600/50 hidden flex-col">
+        <div class="bg-slate-900/90 px-2 py-1 flex items-center justify-between text-[10px] text-slate-300 border-b border-slate-700">
+            <span class="flex items-center gap-1"><i class="fa-solid fa-video text-red-500 animate-pulse"></i> カメラ録画</span>
+            <button id="btn-close-camera" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+        <div class="relative flex-1 bg-black overflow-hidden flex items-center justify-center">
+            <video id="camera-video-preview" autoplay playsinline muted class="w-full h-full object-cover"></video>
+            <video id="ghost-video-playback" playsinline class="w-full h-full object-cover hidden"></video>
+            <div id="cam-recording-badge" class="absolute top-2 left-2 px-1.5 py-0.5 bg-red-600/90 text-[9px] font-bold rounded text-white hidden flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span> REC
+            </div>
+        </div>
+    </div>
+
+    <!-- TOP RIGHT: Vertical Map Control Buttons (44x44px touch targets) -->
+    <div class="fixed right-3 top-[92px] z-20 flex flex-col gap-2.5">
+        <button id="btn-zoom-in" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg text-slate-100 hover:bg-slate-700/50 active:scale-95 transition-all">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+        <button id="btn-zoom-out" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg text-slate-100 hover:bg-slate-700/50 active:scale-95 transition-all">
+            <i class="fa-solid fa-minus"></i>
+        </button>
+        <button id="btn-toggle-camera" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all text-rose-400">
+            📹
+        </button>
+        <button id="btn-open-map-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all">
+            🗺️
+        </button>
+        <button id="btn-open-style-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all">
+            🎨
+        </button>
+    </div>
+
+    <!-- BOTTOM PANEL: Recording & Ghost Control Panel -->
+    <div id="bottom-panel" class="fixed bottom-0 left-0 right-0 z-20 transition-transform duration-300 ease-in-out">
+        <div class="flex justify-center -mb-1">
+            <button id="btn-toggle-bottom" class="glass-panel px-5 py-1 rounded-t-xl text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-1 shadow-lg">
+                <span id="bottom-toggle-icon">▼</span>
+                <span id="bottom-toggle-text">メニュー縮小</span>
+            </button>
+        </div>
+
+        <div class="glass-panel border-b-0 rounded-t-2xl p-4 max-w-3xl mx-auto space-y-3">
+            
+            <!-- Tracking Mode Toggle (TEXT ONLY) & File Import Buttons -->
+            <div class="flex items-center justify-between gap-2">
+                <button id="btn-track-mode" class="flex-1 py-2 px-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/60 rounded-xl text-xs font-semibold text-cyan-400 active:scale-95 transition-all text-center">
+                    追尾: オフ
+                </button>
+
+                <!-- iOS Safari Safe File Import -->
+                <label class="flex-1 py-2 px-3 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-600/60 rounded-xl text-xs font-semibold text-slate-200 cursor-pointer active:scale-95 transition-all text-center truncate">
+                    📂 GPX/KML/KMZ 読込
+                    <input type="file" id="file-input" class="hidden" />
+                </label>
+
+                <!-- Sync Video Load -->
+                <label class="py-2 px-3 bg-indigo-900/60 hover:bg-indigo-800/80 border border-indigo-500/50 rounded-xl text-xs font-semibold text-indigo-200 cursor-pointer active:scale-95 transition-all text-center">
+                    🎥 動画同期
+                    <input type="file" id="video-file-input" class="hidden" accept="video/*" />
+                </label>
+            </div>
+
+            <!-- Ghost Player scrub & controls -->
+            <div id="ghost-controls-container" class="space-y-2 bg-slate-900/40 p-2.5 rounded-xl border border-slate-800">
+                <div class="flex items-center justify-between text-xs text-slate-300">
+                    <span class="font-medium text-cyan-300 flex items-center gap-1">👻 ゴースト再生: <span id="ghost-file-name" class="text-slate-400 font-normal">未読み込み</span></span>
+                    <span id="ghost-time-display" class="font-mono">00:00 / 00:00</span>
+                </div>
+
+                <input type="range" id="ghost-seekbar" min="0" max="100" value="0" step="0.1" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" disabled>
+
+                <div class="flex items-center justify-between gap-1.5 pt-1">
+                    <button id="btn-ghost-play" class="px-3 py-1.5 bg-cyan-600/80 hover:bg-cyan-500 rounded-lg text-xs font-medium disabled:opacity-40" disabled>
+                        ▶ 再生
+                    </button>
+                    
+                    <!-- Checkpoints S/G controls -->
+                    <div class="flex items-center gap-1">
+                        <button id="btn-set-start" class="px-2 py-1 bg-emerald-700/70 hover:bg-emerald-600 rounded text-[11px] disabled:opacity-40" disabled>S: 設定</button>
+                        <button id="btn-clear-start" class="px-1.5 py-1 bg-slate-700/70 hover:bg-slate-600 rounded text-[11px] disabled:opacity-40" disabled>解除</button>
+                        <button id="btn-set-finish" class="px-2 py-1 bg-rose-700/70 hover:bg-rose-600 rounded text-[11px] disabled:opacity-40" disabled>G: 設定</button>
+                        <button id="btn-clear-finish" class="px-1.5 py-1 bg-slate-700/70 hover:bg-slate-600 rounded text-[11px] disabled:opacity-40" disabled>解除</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPS Recording Action Button -->
+            <div class="flex items-center justify-between gap-3 pt-1">
+                <button id="btn-record-toggle" class="flex-1 py-3 bg-red-600 hover:bg-red-500 active:scale-98 text-white rounded-xl font-bold text-sm shadow-lg shadow-red-900/30 transition-all flex items-center justify-center gap-2">
+                    <span id="record-icon-dot" class="w-3 h-3 rounded-full bg-white inline-block"></span>
+                    <span id="record-btn-text">GPS & 動画記録開始</span>
+                </button>
+            </div>
+
+            <!-- Bottom metadata -->
+            <div class="flex justify-between items-center text-[10px] text-slate-500 pt-1">
+                <span id="wake-lock-status">WakeLock: 非アクティブ</span>
+                <span class="font-mono">v2026.10.14.1335</span>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- MODAL: Map Tile Switcher -->
+    <div id="modal-map-tiles" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden p-4">
+        <div class="glass-panel w-full max-w-md rounded-2xl p-5 space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-2">
+                <h3 class="font-bold text-slate-100 text-base">🗺️ 背景地図の選択</h3>
+                <button id="btn-close-map-modal" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2.5 max-h-[60vh] overflow-y-auto pr-1">
+                <button data-tile="gsi_pale" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
+                    <div class="font-bold text-cyan-400">国土地理院 (淡色)</div>
+                    <div class="text-[10px] text-slate-400">標準マップ (デフォルト)</div>
+                </button>
+                <button data-tile="gsi_std" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
+                    <div class="font-bold text-slate-200">国土地理院 (標準)</div>
+                    <div class="text-[10px] text-slate-400">詳細日本語地図</div>
+                </button>
+                <button data-tile="gsi_photo" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
+                    <div class="font-bold text-slate-200">国土地理院 (写真)</div>
+                    <div class="text-[10px] text-slate-400">オルソ航空写真</div>
+                </button>
+                <button data-tile="gsi_blank" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
+                    <div class="font-bold text-slate-200">国土地理院 (白地図)</div>
+                    <div class="text-[10px] text-slate-400">シンプル背景</div>
+                </button>
+                <button data-tile="osm" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
+                    <div class="font-bold text-slate-200">OpenStreetMap</div>
+                    <div class="text-[10px] text-slate-400">世界標準マップ</div>
+                </button>
+                <button data-tile="opentopo" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
+                    <div class="font-bold text-slate-200">OpenTopoMap</div>
+                    <div class="text-[10px] text-slate-400">等高線・地形強調</div>
+                </button>
+                <button data-tile="esri_sat" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1 col-span-2">
+                    <div class="font-bold text-slate-200">Esri World Imagery (衛星画像)</div>
+                    <div class="text-[10px] text-slate-400">高精細グローバル衛星写真</div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Custom Polyline Styling -->
+    <div id="modal-style-config" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden p-4">
+        <div class="glass-panel w-full max-w-md rounded-2xl p-5 space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-2">
+                <h3 class="font-bold text-slate-100 text-base">🎨 軌跡スタイルの設定</h3>
+                <button id="btn-close-style-modal" class="text-slate-400 hover:text-white text-lg">✕</button>
+            </div>
+            
+            <div class="space-y-4 text-xs">
+                <!-- Ghost Polyline Config -->
+                <div class="p-3 bg-slate-800/60 rounded-xl space-y-2 border border-slate-700/60">
+                    <div class="font-bold text-cyan-400">👻 ゴーストの軌跡</div>
+                    <div class="flex items-center justify-between">
+                        <span>カラー</span>
+                        <input type="color" id="style-ghost-color" value="#00d2ff" class="w-8 h-8 rounded bg-transparent cursor-pointer">
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between"><span>線の太さ</span><span id="ghost-width-val">10px</span></div>
+                        <input type="range" id="style-ghost-width" min="1" max="20" value="10" class="w-full">
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between"><span>不透明度</span><span id="ghost-opacity-val">85%</span></div>
+                        <input type="range" id="style-ghost-opacity" min="0.1" max="1.0" step="0.05" value="0.85" class="w-full">
+                    </div>
+                </div>
+
+                <!-- User Track Polyline Config -->
+                <div class="p-3 bg-slate-800/60 rounded-xl space-y-2 border border-slate-700/60">
+                    <div class="font-bold text-rose-400">🏃 自分の走行ログ</div>
+                    <div class="flex items-center justify-between">
+                        <span>カラー</span>
+                        <input type="color" id="style-user-color" value="#ff2d55" class="w-8 h-8 rounded bg-transparent cursor-pointer">
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between"><span>線の太さ</span><span id="user-width-val">10px</span></div>
+                        <input type="range" id="style-user-width" min="1" max="20" value="10" class="w-full">
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between"><span>不透明度</span><span id="user-opacity-val">90%</span></div>
+                        <input type="range" id="style-user-opacity" min="0.1" max="1.0" step="0.05" value="0.90" class="w-full">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Mario Kart Style Race Result Modal -->
+    <div id="modal-result" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center hidden p-4">
+        <div class="glass-panel w-full max-w-sm rounded-3xl p-6 text-center space-y-5 border-2 border-slate-600 shadow-2xl relative overflow-hidden">
+            <div id="result-badge-bg" class="absolute -top-12 -left-12 w-40 h-40 bg-emerald-500/10 rounded-full blur-2xl"></div>
+
+            <div id="result-icon-banner" class="text-6xl animate-bounce pt-2">🏆</div>
+            
+            <div class="space-y-1">
+                <h2 id="result-status-title" class="text-3xl font-extrabold tracking-wider text-amber-400">WIN!</h2>
+                <p id="result-subtitle" class="text-xs text-slate-300">ゴーストとの並走レースが完了しました</p>
+            </div>
+
+            <div class="bg-slate-900/80 rounded-2xl p-4 space-y-3 border border-slate-700/80 text-xs">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span class="text-slate-400">TIME GAP</span>
+                    <span id="res-time-gap" class="font-bold text-sm text-emerald-400">- 00:04.2</span>
+                </div>
+                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span class="text-slate-400">走行タイム</span>
+                    <span id="res-elapsed-time" class="font-mono text-slate-200">02:45.8</span>
+                </div>
+                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span class="text-slate-400">走行距離</span>
+                    <span id="res-distance" class="font-mono text-slate-200">1.42 km</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-slate-400">平均速度</span>
+                    <span id="res-avg-speed" class="font-mono text-slate-200">30.8 km/h</span>
+                </div>
+            </div>
+
+            <div class="flex gap-2 pt-1">
+                <button id="btn-export-gpx" class="flex-1 py-3 bg-cyan-600 hover:bg-cyan-500 rounded-xl font-bold text-xs text-white shadow-lg transition-all">
+                    💾 GPX / 動画保存
+                </button>
+                <button id="btn-close-result" class="py-3 px-4 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold text-xs text-slate-200 transition-all">
+                    閉じる
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP JAVASCRIPT LOGIC -->
+    <script>
+        // App State Constants & Variables
+        const APP_VERSION = 'v2026.10.14.1335';
+        const CHECKPOINT_RADIUS = 25; // Checkpoint auto detection radius in meters
+
+        let map, currentTileLayer;
+        let watchPositionId = null;
+        let wakeLock = null;
+
+        // User Recording State
+        let isRecording = false;
+        let recordedPoints = []; // [{lat, lng, ele, time, timestamp}]
+        let userPolyline = null;
+        let userMarker = null;
+        let lastUserPoint = null;
+        let recordStartTime = null;
+
+        // Ghost Player State
+        let ghostPoints = []; // [{lat, lng, ele, time, secFromStart}]
+        let ghostPolyline = null;
+        let ghostMarker = null;
+        let ghostDurationSec = 0;
+        let ghostPlaybackTimer = null;
+        let ghostCurrentSec = 0;
+        let isGhostPlaying = false;
+
+        // Start / Finish Checkpoints
+        let startPoint = null; // {lat, lng, index, marker, circle}
+        let finishPoint = null; // {lat, lng, index, marker, circle}
+        let isStandbyForStart = false;
+        let raceState = 'STOPPED'; // 'STOPPED', 'STANDBY', 'RACING', 'FINISHED'
+
+        // Tracking Mode Enum: 0: Off, 1: User, 2: Ghost, 3: Both Auto
+        let trackingMode = 0;
+        const trackingModeLabels = ['追尾: オフ', '追尾: 現在地', '追尾: ゴースト', '追尾: 両者自動'];
+
+        // Custom Styles
+        let ghostStyle = { color: '#00d2ff', weight: 10, opacity: 0.85 };
+        let userStyle = { color: '#ff2d55', weight: 10, opacity: 0.90 };
+
+        // Media Recorder & Video State
+        let mediaRecorder = null;
+        let recordedVideoChunks = [];
+        let cameraStream = null;
+        let recordedVideoBlob = null;
+        let ghostVideoUrl = null;
+
+        // Map Tile Providers Definition
+        const TILE_PROVIDERS = {
+            gsi_pale: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+            gsi_std: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+            gsi_photo: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+            gsi_blank: 'https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png',
+            osm: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            opentopo: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+            esri_sat: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        };
+
+        // Initialize App on DOM Load
+        window.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            initUIEvents();
+            initStyleEvents();
+            initCameraEvents();
+            initGeolocationWatch();
+        });
+
+        // 1. Map Initialization
+        function initMap() {
+            // Center: Koriyama, Fukushima (37.398, 140.388), Zoom 13
+            map = L.map('map', {
+                zoomControl: false,
+                attributionControl: false
+            }).setView([37.398, 140.388], 13);
+
+            // Default layer: GSI Pale
+            currentTileLayer = L.tileLayer(TILE_PROVIDERS.gsi_pale, {
+                maxZoom: 18
+            }).addTo(map);
+
+            // Init Polylines
+            ghostPolyline = L.polyline([], { color: ghostStyle.color, weight: ghostStyle.weight, opacity: ghostStyle.opacity }).addTo(map);
+            userPolyline = L.polyline([], { color: userStyle.color, weight: userStyle.weight, opacity: userStyle.opacity }).addTo(map);
+        }
+
+        // 2. Geolocation Watch
+        function initGeolocationWatch() {
+            if (!navigator.geolocation) return;
+
+            watchPositionId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    const accuracy = pos.coords.accuracy;
+                    const speed = pos.coords.speed || 0; // m/s
+                    const now = new Date();
+
+                    lastUserPoint = { lat, lng, speed, timestamp: now.getTime() };
+
+                    updateUserMarker(lat, lng);
+                    processGPSPositionUpdate(lat, lng, speed, now);
+                },
+                (err) => console.warn('GPS Watch Error:', err),
+                { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+            );
+        }
+
+        // 3. User Marker Update
+        function updateUserMarker(lat, lng) {
+            if (!userMarker) {
+                const userIcon = L.divIcon({
+                    className: 'user-pulse-marker',
+                    html: '<div style="width:12px;height:12px;background:#3b82f6;border:2px solid white;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.4);"></div>',
+                    iconSize: [12, 12],
+                    iconAnchor: [6, 6]
+                });
+                userMarker = L.marker([lat, lng], { icon: userIcon }).addTo(map);
+            } else {
+                userMarker.setLatLng([lat, lng]);
+            }
+
+            if (trackingMode === 1) { // Track User
+                panMapWithOffset([lat, lng]);
+            } else if (trackingMode === 3) { // Track Both Auto
+                autoFitBothMarkers();
+            }
+        }
+
+        // 4. GPS Position Update & Start/Finish Logic
+        function processGPSPositionUpdate(lat, lng, speed, timeObj) {
+            // Update Speed Dashboard
+            const userSpeedKmh = (speed * 3.6).toFixed(1);
+            let ghostSpeedKmh = '0.0';
+
+            if (ghostPoints.length > 0 && isGhostPlaying) {
+                const curPoint = getGhostPointAtSec(ghostCurrentSec);
+                if (curPoint && curPoint.speed) {
+                    ghostSpeedKmh = (curPoint.speed * 3.6).toFixed(1);
+                }
+            }
+            document.getElementById('dash-speeds').innerHTML = `${userSpeedKmh} / ${ghostSpeedKmh} <span class="text-[10px] text-slate-400 font-normal">km/h</span>`;
+
+            // Auto-start sync on Start Checkpoint proximity
+            if (raceState === 'STANDBY' && startPoint) {
+                const distToStart = getDistanceMeters([lat, lng], [startPoint.lat, startPoint.lng]);
+                if (distToStart <= CHECKPOINT_RADIUS) {
+                    startRaceAndGhostPlayback();
+                }
+            }
+
+            // GPS Recording Point Logging
+            if (isRecording) {
+                const pointLog = { lat, lng, ele: 0, time: timeObj.toISOString(), timestamp: timeObj.getTime() };
+                recordedPoints.push(pointLog);
+                userPolyline.addLatLng([lat, lng]);
+
+                // Update Dist & Time Gap Dashboard
+                updateVSDashboard(lat, lng);
+
+                // Auto-Finish Detection
+                if (raceState === 'RACING' && finishPoint) {
+                    const distToFinish = getDistanceMeters([lat, lng], [finishPoint.lat, finishPoint.lng]);
+                    if (distToFinish <= CHECKPOINT_RADIUS) {
+                        finishRaceAndShowResult(true);
+                    }
+                }
+            }
+        }
+
+        // Start Race & Ghost Playback Automatically
+        function startRaceAndGhostPlayback() {
+            raceState = 'RACING';
+            document.getElementById('status-race-state').textContent = '並走中';
+            document.getElementById('status-race-state').className = 'font-bold text-emerald-400 text-xs px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/20 animate-pulse';
+
+            // Start Ghost Playback
+            if (ghostPoints.length > 0) {
+                playGhost();
+            }
+        }
+
+        // Finish Race Logic & Mario-Kart Style Result Trigger
+        function finishRaceAndShowResult(isWinOrFinished) {
+            raceState = 'FINISHED';
+            stopRecording();
+
+            document.getElementById('status-race-state').textContent = 'ゴール';
+            document.getElementById('status-race-state').className = 'font-bold text-cyan-400 text-xs px-2 py-0.5 rounded bg-cyan-400/10 border border-cyan-400/20';
+
+            // Calculate Elapsed Time and Distances
+            const elapsedSec = (new Date().getTime() - recordStartTime) / 1000;
+            const ghostTargetSec = finishPoint ? ghostPoints[finishPoint.index].secFromStart : ghostDurationSec;
+            
+            const isWin = elapsedSec <= ghostTargetSec;
+            const timeGapSec = Math.abs(elapsedSec - ghostTargetSec);
+
+            // Populate Result Modal
+            document.getElementById('result-status-title').textContent = isWin ? 'WIN! 🏆' : 'LOSE... 💀';
+            document.getElementById('result-status-title').className = `text-3xl font-extrabold tracking-wider ${isWin ? 'text-amber-400' : 'text-slate-400'}`;
+            document.getElementById('result-icon-banner').textContent = isWin ? '🏆' : '💀';
+
+            document.getElementById('res-time-gap').textContent = `${isWin ? '-' : '+'} ${formatSeconds(timeGapSec)}`;
+            document.getElementById('res-time-gap').className = `font-bold text-sm ${isWin ? 'text-emerald-400' : 'text-rose-400'}`;
+
+            document.getElementById('res-elapsed-time').textContent = formatSeconds(elapsedSec);
+
+            const totalDistMeters = calculateTotalDistance(recordedPoints);
+            document.getElementById('res-distance').textContent = `${(totalDistMeters / 1000).toFixed(2)} km`;
+
+            const avgSpeedKmh = elapsedSec > 0 ? ((totalDistMeters / 1000) / (elapsedSec / 3600)).toFixed(1) : '0.0';
+            document.getElementById('res-avg-speed').textContent = `${avgSpeedKmh} km/h`;
+
+            // Open Result Modal
+            document.getElementById('modal-result').classList.remove('hidden');
+        }
+
+        // 5. VS Race Real-time Dashboard Updates
+        function updateVSDashboard(userLat, userLng) {
+            if (ghostPoints.length === 0) return;
+
+            const ghostPt = getGhostPointAtSec(ghostCurrentSec);
+            if (!ghostPt) return;
+
+            // Distance Gap
+            const distGapMeters = getDistanceMeters([userLat, userLng], [ghostPt.lat, ghostPt.lng]);
+            document.getElementById('dash-dist-gap').textContent = `${Math.round(distGapMeters)} m`;
+
+            // Time Gap estimation based on nearest ghost point index
+            let closestGhostIdx = 0;
+            let minDist = Infinity;
+            for (let i = 0; i < ghostPoints.length; i++) {
+                const d = getDistanceMeters([userLat, userLng], [ghostPoints[i].lat, ghostPoints[i].lng]);
+                if (d < minDist) {
+                    minDist = d;
+                    closestGhostIdx = i;
+                }
+            }
+
+            const ghostNearestSec = ghostPoints[closestGhostIdx].secFromStart;
+            const timeGapSec = ghostCurrentSec - ghostNearestSec;
+
+            const gapPrefix = timeGapSec >= 0 ? '+' : '-';
+            document.getElementById('dash-time-gap').textContent = `${gapPrefix}${formatSeconds(Math.abs(timeGapSec))}`;
+        }
+
+        // 6. Camera Recording & MediaRecorder
+        async function initCameraEvents() {
+            const btnToggleCam = document.getElementById('btn-toggle-camera');
+            const camContainer = document.getElementById('camera-preview-container');
+            const btnCloseCam = document.getElementById('btn-close-camera');
+
+            btnToggleCam.addEventListener('click', async () => {
+                if (camContainer.classList.contains('hidden')) {
+                    await startCameraStream();
+                    camContainer.classList.remove('hidden');
+                } else {
+                    stopCameraStream();
+                    camContainer.classList.add('hidden');
+                }
+            });
+
+            btnCloseCam.addEventListener('click', () => {
+                stopCameraStream();
+                camContainer.classList.add('hidden');
+            });
+        }
+
+        async function startCameraStream() {
+            try {
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: true
+                });
+                const videoPrev = document.getElementById('camera-video-preview');
+                videoPrev.srcObject = cameraStream;
+            } catch (err) {
+                alert('カメラの起動に失敗しました: ' + err.message);
+            }
+        }
+
+        function stopCameraStream() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+        }
+
+        function startMediaRecording() {
+            if (!cameraStream) return;
+            recordedVideoChunks = [];
+
+            try {
+                mediaRecorder = new MediaRecorder(cameraStream, { mimeType: 'video/webm;codecs=vp8,opus' });
+            } catch (e) {
+                try { mediaRecorder = new MediaRecorder(cameraStream); } catch (err) { return; }
+            }
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedVideoChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                recordedVideoBlob = new Blob(recordedVideoChunks, { type: 'video/webm' });
+            };
+
+            mediaRecorder.start(1000);
+            document.getElementById('cam-recording-badge').classList.remove('hidden');
+        }
+
+        function stopMediaRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            document.getElementById('cam-recording-badge').classList.add('hidden');
+        }
+
+        // 7. iOS Safe File Reader (GPX / KML / KMZ)
+        function initUIEvents() {
+            const fileInput = document.getElementById('file-input');
+            fileInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const fileName = file.name;
+                const ext = fileName.split('.').pop().toLowerCase();
+
+                document.getElementById('ghost-file-name').textContent = fileName;
+
+                try {
+                    let geojson;
+                    if (ext === 'kmz') {
+                        const zip = await JSZip.loadAsync(file);
+                        const kmlFile = Object.keys(zip.files).find(name => name.endsWith('.kml'));
+                        if (!kmlFile) throw new Error('KMZ内にKMLが見つかりませんでした');
+                        const kmlText = await zip.files[kmlFile].async('string');
+                        const dom = new DOMParser().parseFromString(kmlText, 'text/xml');
+                        geojson = toGeoJSON.kml(dom);
+                    } else if (ext === 'kml') {
+                        const text = await file.text();
+                        const dom = new DOMParser().parseFromString(text, 'text/xml');
+                        geojson = toGeoJSON.kml(dom);
+                    } else { // GPX
+                        const text = await file.text();
+                        const dom = new DOMParser().parseFromString(text, 'text/xml');
+                        geojson = toGeoJSON.gpx(dom);
+                    }
+
+                    parseAndLoadGhostTrack(geojson);
+                } catch (err) {
+                    alert('ファイルの読み込みに失敗しました: ' + err.message);
+                }
+            });
+
+            // Video Sync Load Input
+            document.getElementById('video-file-input').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                ghostVideoUrl = URL.createObjectURL(file);
+                const ghostVideoElem = document.getElementById('ghost-video-playback');
+                ghostVideoElem.src = ghostVideoUrl;
+                ghostVideoElem.classList.remove('hidden');
+                document.getElementById('camera-video-preview').classList.add('hidden');
+                document.getElementById('camera-preview-container').classList.remove('hidden');
+            });
+
+            // Tracking Mode Toggle Button (Text Only)
+            const btnTrackMode = document.getElementById('btn-track-mode');
+            btnTrackMode.addEventListener('click', () => {
+                trackingMode = (trackingMode + 1) % 4;
+                btnTrackMode.textContent = trackingModeLabels[trackingMode];
+            });
+
+            // Zoom Controls
+            document.getElementById('btn-zoom-in').addEventListener('click', () => map.zoomIn());
+            document.getElementById('btn-zoom-out').addEventListener('click', () => map.zoomOut());
+
+            // Bottom Panel Collapse Toggle
+            const btnToggleBottom = document.getElementById('btn-toggle-bottom');
+            const bottomPanel = document.getElementById('bottom-panel');
+            let isBottomCollapsed = false;
+
+            btnToggleBottom.addEventListener('click', () => {
+                isBottomCollapsed = !isBottomCollapsed;
+                if (isBottomCollapsed) {
+                    bottomPanel.style.transform = 'translateY(calc(100% - 28px))';
+                    document.getElementById('bottom-toggle-icon').textContent = '▲';
+                    document.getElementById('bottom-toggle-text').textContent = 'メニュー表示';
+                } else {
+                    bottomPanel.style.transform = 'translateY(0)';
+                    document.getElementById('bottom-toggle-icon').textContent = '▼';
+                    document.getElementById('bottom-toggle-text').textContent = 'メニュー縮小';
+                }
+            });
+
+            // GPS Record Toggle Button
+            document.getElementById('btn-record-toggle').addEventListener('click', toggleGPSRecording);
+
+            // Ghost Player Play / Seek
+            document.getElementById('btn-ghost-play').addEventListener('click', toggleGhostPlayback);
+            
+            const seekbar = document.getElementById('ghost-seekbar');
+            seekbar.addEventListener('input', (e) => {
+                ghostCurrentSec = parseFloat(e.target.value);
+                updateGhostPlayerUI();
+                
+                // Sync Ghost Video playback if available
+                const ghostVideo = document.getElementById('ghost-video-playback');
+                if (ghostVideoUrl && ghostVideo.duration) {
+                    ghostVideo.currentTime = ghostCurrentSec;
+                }
+            });
+
+            // Checkpoints Controls
+            document.getElementById('btn-set-start').addEventListener('click', setStartCheckpointFromSeeker);
+            document.getElementById('btn-clear-start').addEventListener('click', clearStartCheckpoint);
+            document.getElementById('btn-set-finish').addEventListener('click', setFinishCheckpointFromSeeker);
+            document.getElementById('btn-clear-finish').addEventListener('click', clearFinishCheckpoint);
+
+            // Export & Result Controls
+            document.getElementById('btn-export-gpx').addEventListener('click', exportGPXAndVideo);
+            document.getElementById('btn-close-result').addEventListener('click', () => {
+                document.getElementById('modal-result').classList.add('hidden');
+            });
+        }
+
+        // 8. Ghost Track Parsing & Setup
+        function parseAndLoadGhostTrack(geojson) {
+            ghostPoints = [];
+            
+            let coords = [];
+            if (geojson.features && geojson.features.length > 0) {
+                const lineFeature = geojson.features.find(f => f.geometry && (f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString'));
+                if (lineFeature) {
+                    if (lineFeature.geometry.type === 'LineString') {
+                        coords = lineFeature.geometry.coordinates;
+                    } else {
+                        coords = lineFeature.geometry.coordinates.flat();
+                    }
+                }
+            }
+
+            if (coords.length === 0) {
+                alert('有効なトラックデータが見つかりませんでした。');
+                return;
+            }
+
+            let cumSec = 0;
+            for (let i = 0; i < coords.length; i++) {
+                const c = coords[i];
+                const lng = c[0];
+                const lat = c[1];
+                const ele = c[2] || 0;
+
+                if (i > 0) {
+                    const prev = coords[i - 1];
+                    const dist = getDistanceMeters([prev[1], prev[0]], [lat, lng]);
+                    cumSec += Math.max(1, dist / 4.16); // Fallback simulated ~15km/h pacing if no timestamps
+                }
+
+                ghostPoints.push({ lat, lng, ele, secFromStart: cumSec });
+            }
+
+            ghostDurationSec = cumSec;
+            
+            // Render Ghost Polyline on Map
+            const latLngs = ghostPoints.map(p => [p.lat, p.lng]);
+            ghostPolyline.setLatLngs(latLngs);
+            map.fitBounds(ghostPolyline.getBounds(), { padding: [50, 50] });
+
+            // Create Ghost Marker 👻
+            if (!ghostMarker) {
+                const ghostIcon = L.divIcon({
+                    className: 'ghost-marker-icon',
+                    html: '👻',
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                });
+                ghostMarker = L.marker([ghostPoints[0].lat, ghostPoints[0].lng], { icon: ghostIcon }).addTo(map);
+            } else {
+                ghostMarker.setLatLng([ghostPoints[0].lat, ghostPoints[0].lng]);
+            }
+
+            // Enable Controls
+            document.getElementById('ghost-seekbar').disabled = false;
+            document.getElementById('ghost-seekbar').max = ghostDurationSec;
+            document.getElementById('ghost-seekbar').value = 0;
+            document.getElementById('btn-ghost-play').disabled = false;
+            document.getElementById('btn-set-start').disabled = false;
+            document.getElementById('btn-set-finish').disabled = false;
+
+            // Automatic Default Checkpoint: Goal at end
+            setFinishCheckpoint(ghostPoints.length - 1);
+            ghostCurrentSec = 0;
+            updateGhostPlayerUI();
+        }
+
+        // Ghost Playback Control
+        function toggleGhostPlayback() {
+            if (isGhostPlaying) {
+                pauseGhost();
+            } else {
+                playGhost();
+            }
+        }
+
+        function playGhost() {
+            if (ghostPoints.length === 0) return;
+            isGhostPlaying = true;
+            document.getElementById('btn-ghost-play').textContent = '⏸ 停止';
+
+            const ghostVideo = document.getElementById('ghost-video-playback');
+            if (ghostVideoUrl) ghostVideo.play();
+
+            ghostPlaybackTimer = setInterval(() => {
+                ghostCurrentSec += 0.5;
+                if (ghostCurrentSec >= ghostDurationSec) {
+                    ghostCurrentSec = ghostDurationSec;
+                    pauseGhost();
+                }
+                updateGhostPlayerUI();
+            }, 500);
+        }
+
+        function pauseGhost() {
+            isGhostPlaying = false;
+            document.getElementById('btn-ghost-play').textContent = '▶ 再生';
+            if (ghostPlaybackTimer) clearInterval(ghostPlaybackTimer);
+
+            const ghostVideo = document.getElementById('ghost-video-playback');
+            if (ghostVideoUrl) ghostVideo.pause();
+        }
+
+        function updateGhostPlayerUI() {
+            document.getElementById('ghost-seekbar').value = ghostCurrentSec;
+            document.getElementById('ghost-time-display').textContent = `${formatSeconds(ghostCurrentSec)} / ${formatSeconds(ghostDurationSec)}`;
+
+            const pt = getGhostPointAtSec(ghostCurrentSec);
+            if (pt && ghostMarker) {
+                ghostMarker.setLatLng([pt.lat, pt.lng]);
+                if (trackingMode === 2) { // Track Ghost
+                    panMapWithOffset([pt.lat, pt.lng]);
+                } else if (trackingMode === 3) { // Track Both
+                    autoFitBothMarkers();
+                }
+            }
+        }
+
+        function getGhostPointAtSec(sec) {
+            if (ghostPoints.length === 0) return null;
+            for (let i = 0; i < ghostPoints.length - 1; i++) {
+                if (sec >= ghostPoints[i].secFromStart && sec <= ghostPoints[i + 1].secFromStart) {
+                    return ghostPoints[i];
+                }
+            }
+            return ghostPoints[ghostPoints.length - 1];
+        }
+
+        // 9. Checkpoints (Start / Finish S/G)
+        function setStartCheckpointFromSeeker() {
+            const idx = getGhostIndexAtSec(ghostCurrentSec);
+            setStartCheckpoint(idx);
+        }
+
+        function setStartCheckpoint(idx) {
+            clearStartCheckpoint();
+            const pt = ghostPoints[idx];
+            
+            const icon = L.divIcon({ className: 'checkpoint-icon', html: '🏁', iconSize: [24, 24], iconAnchor: [12, 12] });
+            const marker = L.marker([pt.lat, pt.lng], { icon }).addTo(map);
+            const circle = L.circle([pt.lat, pt.lng], { radius: CHECKPOINT_RADIUS, color: '#10b981', fillColor: '#10b981', fillOpacity: 0.25 }).addTo(map);
+
+            startPoint = { lat: pt.lat, lng: pt.lng, index: idx, marker, circle };
+            document.getElementById('status-start').innerHTML = `<span>🏁 S:</span> <span class="text-emerald-400 font-mono">${formatSeconds(pt.secFromStart)}</span>`;
+            document.getElementById('btn-clear-start').disabled = false;
+        }
+
+        function clearStartCheckpoint() {
+            if (startPoint) {
+                map.removeLayer(startPoint.marker);
+                map.removeLayer(startPoint.circle);
+                startPoint = null;
+            }
+            document.getElementById('status-start').innerHTML = `<span>🏁 S:</span> <span class="text-slate-400 font-mono">未設定</span>`;
+            document.getElementById('btn-clear-start').disabled = true;
+        }
+
+        function setFinishCheckpointFromSeeker() {
+            const idx = getGhostIndexAtSec(ghostCurrentSec);
+            setFinishCheckpoint(idx);
+        }
+
+        function setFinishCheckpoint(idx) {
+            clearFinishCheckpoint();
+            const pt = ghostPoints[idx];
+
+            const icon = L.divIcon({ className: 'checkpoint-icon', html: '🚩', iconSize: [24, 24], iconAnchor: [12, 12] });
+            const marker = L.marker([pt.lat, pt.lng], { icon }).addTo(map);
+            const circle = L.circle([pt.lat, pt.lng], { radius: CHECKPOINT_RADIUS, color: '#f43f5e', fillColor: '#f43f5e', fillOpacity: 0.25 }).addTo(map);
+
+            finishPoint = { lat: pt.lat, lng: pt.lng, index: idx, marker, circle };
+            document.getElementById('status-finish').innerHTML = `<span>🚩 G:</span> <span class="text-rose-400 font-mono">${formatSeconds(pt.secFromStart)}</span>`;
+            document.getElementById('btn-clear-finish').disabled = false;
+        }
+
+        function clearFinishCheckpoint() {
+            if (finishPoint) {
+                map.removeLayer(finishPoint.marker);
+                map.removeLayer(finishPoint.circle);
+                finishPoint = null;
+            }
+            document.getElementById('status-finish').innerHTML = `<span>🚩 G:</span> <span class="text-slate-400 font-mono">未設定</span>`;
+            document.getElementById('btn-clear-finish').disabled = true;
+        }
+
+        function getGhostIndexAtSec(sec) {
+            for (let i = 0; i < ghostPoints.length - 1; i++) {
+                if (sec <= ghostPoints[i].secFromStart) return i;
+            }
+            return ghostPoints.length - 1;
+        }
+
+        // 10. GPS Recording Toggle Logic
+        async function toggleGPSRecording() {
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        async function startRecording() {
+            isRecording = true;
+            recordedPoints = [];
+            recordStartTime = new Date().getTime();
+            userPolyline.setLatLngs([]);
+
+            // Standby rule: rewind ghost to start checkpoint time if configured
+            if (startPoint) {
+                ghostCurrentSec = ghostPoints[startPoint.index].secFromStart;
+                updateGhostPlayerUI();
+                raceState = 'STANDBY';
+                document.getElementById('status-race-state').textContent = 'スタート待機中';
+                document.getElementById('status-race-state').className = 'font-bold text-amber-400 text-xs px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/20 animate-pulse';
+            } else {
+                raceState = 'RACING';
+                document.getElementById('status-race-state').textContent = '記録中';
+                document.getElementById('status-race-state').className = 'font-bold text-red-500 text-xs px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20';
+            }
+
+            // Screen Wake Lock
+            requestWakeLock();
+
+            // Start Video Recording if camera active
+            startMediaRecording();
+
+            // Update UI Button
+            const btn = document.getElementById('btn-record-toggle');
+            btn.className = 'flex-1 py-3 bg-slate-700 hover:bg-slate-600 active:scale-98 text-white rounded-xl font-bold text-sm shadow-lg transition-all flex items-center justify-center gap-2';
+            document.getElementById('record-icon-dot').className = 'w-3 h-3 rounded bg-red-500 inline-block';
+            document.getElementById('record-btn-text').textContent = '記録停止';
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            releaseWakeLock();
+            stopMediaRecording();
+
+            if (raceState !== 'FINISHED') {
+                raceState = 'STOPPED';
+                document.getElementById('status-race-state').textContent = '待機中';
+                document.getElementById('status-race-state').className = 'font-bold text-yellow-400 text-xs px-2 py-0.5 rounded bg-yellow-400/10 border border-yellow-400/20';
+            }
+
+            pauseGhost();
+
+            const btn = document.getElementById('btn-record-toggle');
+            btn.className = 'flex-1 py-3 bg-red-600 hover:bg-red-500 active:scale-98 text-white rounded-xl font-bold text-sm shadow-lg shadow-red-900/30 transition-all flex items-center justify-center gap-2';
+            document.getElementById('record-icon-dot').className = 'w-3 h-3 rounded-full bg-white inline-block';
+            document.getElementById('record-btn-text').textContent = 'GPS & 動画記録開始';
+        }
+
+        // Screen Wake Lock API
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    document.getElementById('wake-lock-status').textContent = 'WakeLock: アクティブ';
+                }
+            } catch (err) {
+                console.warn('Wake Lock error:', err);
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release().then(() => {
+                    wakeLock = null;
+                    document.getElementById('wake-lock-status').textContent = 'WakeLock: 非アクティブ';
+                });
+            }
+        }
+
+        // 11. Modal Style & Tile Events
+        function initStyleEvents() {
+            // Map Tile Switcher Modal
+            document.getElementById('btn-open-map-modal').addEventListener('click', () => {
+                document.getElementById('modal-map-tiles').classList.remove('hidden');
+            });
+            document.getElementById('btn-close-map-modal').addEventListener('click', () => {
+                document.getElementById('modal-map-tiles').classList.add('hidden');
+            });
+
+            document.querySelectorAll('.btn-tile-select').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const tileKey = e.currentTarget.getAttribute('data-tile');
+                    if (TILE_PROVIDERS[tileKey]) {
+                        map.removeLayer(currentTileLayer);
+                        currentTileLayer = L.tileLayer(TILE_PROVIDERS[tileKey], { maxZoom: 18 }).addTo(map);
+                        document.getElementById('modal-map-tiles').classList.add('hidden');
+                    }
+                });
+            });
+
+            // Track Style Config Modal
+            document.getElementById('btn-open-style-modal').addEventListener('click', () => {
+                document.getElementById('modal-style-config').classList.remove('hidden');
+            });
+            document.getElementById('btn-close-style-modal').addEventListener('click', () => {
+                document.getElementById('modal-style-config').classList.add('hidden');
+            });
+
+            // Live Style Adjustments
+            document.getElementById('style-ghost-color').addEventListener('input', (e) => {
+                ghostStyle.color = e.target.value;
+                ghostPolyline.setStyle({ color: ghostStyle.color });
+            });
+            document.getElementById('style-ghost-width').addEventListener('input', (e) => {
+                ghostStyle.weight = parseInt(e.target.value);
+                document.getElementById('ghost-width-val').textContent = `${ghostStyle.weight}px`;
+                ghostPolyline.setStyle({ weight: ghostStyle.weight });
+            });
+            document.getElementById('style-ghost-opacity').addEventListener('input', (e) => {
+                ghostStyle.opacity = parseFloat(e.target.value);
+                document.getElementById('ghost-opacity-val').textContent = `${Math.round(ghostStyle.opacity * 100)}%`;
+                ghostPolyline.setStyle({ opacity: ghostStyle.opacity });
+            });
+
+            document.getElementById('style-user-color').addEventListener('input', (e) => {
+                userStyle.color = e.target.value;
+                userPolyline.setStyle({ color: userStyle.color });
+            });
+            document.getElementById('style-user-width').addEventListener('input', (e) => {
+                userStyle.weight = parseInt(e.target.value);
+                document.getElementById('user-width-val').textContent = `${userStyle.weight}px`;
+                userPolyline.setStyle({ weight: userStyle.weight });
+            });
+            document.getElementById('style-user-opacity').addEventListener('input', (e) => {
+                userStyle.opacity = parseFloat(e.target.value);
+                document.getElementById('user-opacity-val').textContent = `${Math.round(userStyle.opacity * 100)}%`;
+                userPolyline.setStyle({ opacity: userStyle.opacity });
+            });
+        }
+
+        // 12. Helper Functions
+        function panMapWithOffset(latLng) {
+            const bottomPanelHeight = document.getElementById('bottom-panel').offsetHeight || 200;
+            const targetPoint = map.latLngToContainerPoint(latLng);
+            const offsetPoint = L.point(targetPoint.x, targetPoint.y + (bottomPanelHeight / 3));
+            const newLatLng = map.containerPointToLatLng(offsetPoint);
+            map.panTo(newLatLng, { animate: true, duration: 0.5 });
+        }
+
+        function autoFitBothMarkers() {
+            if (!userMarker || !ghostMarker) return;
+            const bounds = L.latLngBounds([userMarker.getLatLng(), ghostMarker.getLatLng()]);
+            map.fitBounds(bounds, { paddingBottomRight: [20, 180], paddingTopLeft: [20, 100], maxZoom: 17 });
+        }
+
+        function getDistanceMeters(pt1, pt2) {
+            const R = 6371000;
+            const dLat = (pt2[0] - pt1[0]) * Math.PI / 180;
+            const dLng = (pt2[1] - pt1[1]) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(pt1[0] * Math.PI / 180) * Math.cos(pt2[0] * Math.PI / 180) *
+                      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function calculateTotalDistance(pts) {
+            let total = 0;
+            for (let i = 1; i < pts.length; i++) {
+                total += getDistanceMeters([pts[i - 1].lat, pts[i - 1].lng], [pts[i].lat, pts[i].lng]);
+            }
+            return total;
+        }
+
+        function formatSeconds(sec) {
+            const m = Math.floor(sec / 60);
+            const s = Math.floor(sec % 60);
+            const ms = Math.floor((sec % 1) * 10);
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${ms}`;
+        }
+
+        // GPX File Generation & Synchronized Download
+        function exportGPXAndVideo() {
+            if (recordedPoints.length === 0) {
+                alert('録画・録画データが存在しません。');
+                return;
+            }
+
+            // Export GPX File
+            let gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+            gpxContent += `<gpx version="1.1" creator="GPS Ghost Tracker App" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+            gpxContent += `  <trk>\n    <name>Track_${new Date().toISOString()}</name>\n    <trkseg>\n`;
+
+            recordedPoints.forEach(p => {
+                gpxContent += `      <trkpt lat="${p.lat}" lon="${p.lng}"><ele>${p.ele}</ele><time>${p.time}</time></trkpt>\n`;
+            });
+
+            gpxContent += `    </trkseg>\n  </trk>\n</gpx>`;
+
+            const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Track_${Date.now()}.gpx`;
+            a.click();
+
+            // Export Recorded Video File if present
+            if (recordedVideoBlob) {
+                setTimeout(() => {
+                    const vUrl = URL.createObjectURL(recordedVideoBlob);
+                    const va = document.createElement('a');
+                    va.href = vUrl;
+                    va.download = `Video_${Date.now()}.webm`;
+                    va.click();
+                }, 500);
+            }
+        }
+    </script>
+</body>
+</html>
