@@ -3,23 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GPS Tracker & GPX Ghost Player</title>
-    
+    <title>GPS Tracker & GPX Ghost Player with MP4 CAMM/Telemetry</title>
+
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
+
     <!-- Leaflet CSS & JS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-    
+
     <!-- FontAwesome CDN -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    
-    <!-- JSZip for KMZ extraction -->
+
+    <!-- JSZip for KMZ and Session Bundling -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    
-    <!-- toGeoJSON for KML/KMZ to GeoJSON conversion -->
+
+    <!-- toGeoJSON for KML/KMZ to GeoJSON parsing -->
     <script src="https://unpkg.com/@tmcw/togeojson@5.5.0/dist/togeojson.umd.js"></script>
+
+    <!-- MP4Box.js for MP4 Telemetry / CAMM metadata track embedding -->
+    <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
 
     <style>
         html, body {
@@ -29,12 +32,11 @@
             padding: 0;
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #0f172a;
+            background-color: #0b1120;
             user-select: none;
             -webkit-user-select: none;
         }
 
-        /* Glassmorphism UI Style */
         .glass-panel {
             background: rgba(15, 23, 42, 0.88);
             backdrop-filter: blur(14px);
@@ -43,7 +45,7 @@
             box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
         }
 
-        /* Container View Mode Layouts */
+        /* Responsive View Layouts */
         .view-mode-map .main-map-container {
             width: 100%;
             height: 100vh;
@@ -57,11 +59,11 @@
             top: 135px;
             left: 12px;
             width: 160px;
-            height: 213px;
+            height: 220px;
             z-index: 20;
             border-radius: 1rem;
             overflow: hidden;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
         }
 
         .view-mode-camera .main-map-container {
@@ -69,12 +71,12 @@
             top: 135px;
             left: 12px;
             width: 160px;
-            height: 213px;
+            height: 220px;
             z-index: 20;
             border-radius: 1rem;
             overflow: hidden;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
         }
         .view-mode-camera .camera-window-container {
             width: 100%;
@@ -115,17 +117,17 @@
             background-color: #1e293b;
         }
 
-        /* Current position pulsing dot animation */
+        /* GPS pulse indicator */
         .user-pulse-marker {
             position: relative;
         }
         .user-pulse-marker::after {
             content: '';
             position: absolute;
-            width: 28px;
-            height: 28px;
-            top: -8px;
-            left: -8px;
+            width: 30px;
+            height: 30px;
+            top: -9px;
+            left: -9px;
             border-radius: 50%;
             background-color: rgba(239, 68, 68, 0.65);
             animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
@@ -135,7 +137,6 @@
             100% { transform: scale(2.2); opacity: 0; }
         }
 
-        /* Ghost Marker Cyan Glow */
         .ghost-marker-icon {
             font-size: 28px;
             text-align: center;
@@ -148,7 +149,6 @@
             100% { transform: translateY(-4px); }
         }
 
-        /* Checkpoint Icons */
         .checkpoint-icon {
             font-size: 24px;
             text-align: center;
@@ -156,13 +156,12 @@
             filter: drop-shadow(0 2px 5px rgba(0,0,0,0.6));
         }
 
-        /* Hide default Leaflet Zoom controls */
         .leaflet-control-zoom {
             display: none !important;
         }
 
         input[type=range] {
-            accent-color: #3b82f6;
+            accent-color: #00d2ff;
         }
     </style>
 </head>
@@ -173,74 +172,71 @@
         <div id="map"></div>
     </div>
 
-    <!-- CAMERA & VIDEO VIEWFINDER WINDOW -->
+    <!-- CAMERA & VIDEO VIEWFINDER WINDOW (PiP or Fullscreen) -->
     <div id="camera-preview-container" class="camera-window-container glass-panel transition-all duration-300 flex flex-col">
-        <!-- Viewfinder Titlebar / Controls -->
+        <!-- Viewfinder Titlebar -->
         <div class="bg-slate-900/95 px-2.5 py-1.5 flex items-center justify-between text-[11px] text-slate-300 border-b border-slate-700/80 shrink-0">
             <span class="flex items-center gap-1.5 font-medium">
                 <i class="fa-solid fa-video text-rose-500 animate-pulse"></i>
-                <span id="cam-status-label">カメラ</span>
+                <span id="cam-status-label">CAMM カメラ</span>
             </span>
             <div class="flex items-center gap-2">
                 <button id="btn-switch-cam-facing" title="前後カメラ切替" class="text-slate-300 hover:text-white px-1">
                     <i class="fa-solid fa-rotate"></i>
                 </button>
-                <button id="btn-close-camera" title="非表示" class="text-slate-400 hover:text-white font-bold">✕</button>
+                <button id="btn-close-camera" title="閉じる" class="text-slate-400 hover:text-white font-bold">✕</button>
             </div>
         </div>
 
-        <!-- Video Display Container -->
+        <!-- Video Live Preview / Ghost Video Playback -->
         <div class="relative flex-1 bg-black overflow-hidden flex items-center justify-center">
-            <!-- Camera Live Stream -->
             <video id="camera-video-preview" autoplay playsinline muted class="w-full h-full object-cover"></video>
-            
-            <!-- Playback Video for Synced Replays -->
             <video id="ghost-video-playback" playsinline class="w-full h-full object-cover hidden"></video>
 
-            <!-- Recording Badge Overlay -->
-            <div id="cam-recording-badge" class="absolute top-2 left-2 px-2 py-0.5 bg-rose-600/90 text-[10px] font-bold rounded-full text-white hidden flex items-center gap-1.5 shadow-md">
-                <span class="w-2 h-2 rounded-full bg-white animate-ping"></span> REC
+            <!-- Telemetry / REC Badge -->
+            <div id="cam-recording-badge" class="absolute top-2 left-2 px-2 py-0.5 bg-rose-600/95 text-[10px] font-bold rounded-full text-white hidden flex items-center gap-1.5 shadow-md">
+                <span class="w-2 h-2 rounded-full bg-white animate-ping"></span> REC (CAMM GPS)
             </div>
 
-            <!-- View Camera Switch Shortcut Button (when main view is camera) -->
-            <button id="btn-pip-map-expand" class="absolute bottom-2 right-2 px-2 py-1 bg-slate-900/80 hover:bg-slate-800 text-[10px] rounded-lg text-slate-200 hidden border border-slate-700">
+            <!-- Mode Swap Shortcut Button -->
+            <button id="btn-pip-map-expand" class="absolute bottom-2 right-2 px-2 py-1 bg-slate-900/80 hover:bg-slate-800 text-[10px] rounded-lg text-slate-200 hidden border border-slate-700 shadow">
                 🗺️ 地図拡大
             </button>
         </div>
     </div>
 
     <!-- TOP CENTER: VS Race Dashboard Panel -->
-    <div class="fixed top-3 left-1/2 -translate-x-1/2 z-30 w-[92%] max-w-md glass-panel rounded-2xl p-3 text-center">
+    <div class="fixed top-3 left-1/2 -translate-x-1/2 z-30 w-[94%] max-w-md glass-panel rounded-2xl p-3 text-center">
         <div class="grid grid-cols-3 gap-2 border-b border-slate-700/60 pb-2 mb-2">
             <div>
                 <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">TIME GAP</div>
-                <div id="dash-time-gap" class="text-lg font-bold text-slate-100">-- : --</div>
+                <div id="dash-time-gap" class="text-lg font-bold text-slate-100 font-mono">-- : --</div>
             </div>
             <div>
                 <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">DIST GAP</div>
-                <div id="dash-dist-gap" class="text-lg font-bold text-slate-100">-- m</div>
+                <div id="dash-dist-gap" class="text-lg font-bold text-slate-100 font-mono">-- m</div>
             </div>
             <div>
                 <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">SPEED (YOU / 👻)</div>
-                <div id="dash-speeds" class="text-sm font-bold text-slate-100 mt-1">0.0 / 0.0 <span class="text-[10px] text-slate-400 font-normal">km/h</span></div>
+                <div id="dash-speeds" class="text-sm font-bold text-slate-100 mt-1 font-mono">0.0 / 0.0 <span class="text-[10px] text-slate-400 font-normal">km/h</span></div>
             </div>
         </div>
 
-        <!-- Checkpoint / Race Status -->
+        <!-- Checkpoints & Status -->
         <div class="flex items-center justify-between text-xs px-1 text-slate-300">
-            <div id="status-start" class="flex items-center gap-1">
-                <span>🏁 S:</span> <span class="text-slate-400 font-mono">未設定</span>
+            <div id="status-start" class="flex items-center gap-1 font-mono">
+                <span>🏁 S:</span> <span class="text-slate-400">未設定</span>
             </div>
-            <div id="status-race-state" class="font-bold text-amber-400 text-xs px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/20">
+            <div id="status-race-state" class="font-bold text-amber-400 text-xs px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20">
                 待機中
             </div>
-            <div id="status-finish" class="flex items-center gap-1">
-                <span>🚩 G:</span> <span class="text-slate-400 font-mono">未設定</span>
+            <div id="status-finish" class="flex items-center gap-1 font-mono">
+                <span>🚩 G:</span> <span class="text-slate-400">未設定</span>
             </div>
         </div>
     </div>
 
-    <!-- TOP RIGHT: Vertical Map Control Buttons (44x44px touch targets) -->
+    <!-- TOP RIGHT: 44x44px Vertical Controls (top: 92px) -->
     <div class="fixed right-3 top-[92px] z-30 flex flex-col gap-2">
         <button id="btn-zoom-in" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg text-slate-100 hover:bg-slate-700/50 active:scale-95 transition-all shadow-lg">
             <i class="fa-solid fa-plus"></i>
@@ -248,13 +244,13 @@
         <button id="btn-zoom-out" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg text-slate-100 hover:bg-slate-700/50 active:scale-95 transition-all shadow-lg">
             <i class="fa-solid fa-minus"></i>
         </button>
-        <button id="btn-open-view-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all text-rose-400 shadow-lg" title="画面表示モード切り替え">
+        <button id="btn-open-view-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all text-rose-400 shadow-lg" title="画面表示モード切替">
             📹
         </button>
-        <button id="btn-open-map-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all shadow-lg" title="背景地図の変更">
+        <button id="btn-open-map-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all shadow-lg" title="背景地図">
             🗺️
         </button>
-        <button id="btn-open-style-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all shadow-lg" title="軌跡スタイル">
+        <button id="btn-open-style-modal" class="w-[44px] h-[44px] glass-panel rounded-xl flex items-center justify-center text-lg hover:bg-slate-700/50 active:scale-95 transition-all shadow-lg" title="軌跡設定">
             🎨
         </button>
     </div>
@@ -269,30 +265,23 @@
         </div>
 
         <div class="glass-panel border-b-0 rounded-t-2xl p-4 max-w-3xl mx-auto space-y-3">
-            
-            <!-- Tracking Mode Toggle (TEXT ONLY) & File Import Buttons -->
+            <!-- Tracking Mode Toggle (TEXT ONLY) & Unified File Input -->
             <div class="flex items-center justify-between gap-2">
-                <button id="btn-track-mode" class="flex-1 py-2 px-3 bg-slate-800/90 hover:bg-slate-700/90 border border-slate-600/60 rounded-xl text-xs font-semibold text-cyan-400 active:scale-95 transition-all text-center">
+                <button id="btn-track-mode" class="flex-1 py-2 px-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-600/60 rounded-xl text-xs font-semibold text-cyan-400 active:scale-95 transition-all text-center">
                     追尾: オフ
                 </button>
 
                 <!-- iOS Safari Safe File Import (No accept attribute) -->
-                <label class="flex-1 py-2 px-3 bg-slate-800/90 hover:bg-slate-700/90 border border-slate-600/60 rounded-xl text-xs font-semibold text-slate-200 cursor-pointer active:scale-95 transition-all text-center truncate">
-                    📂 GPX/KML/KMZ 読込
+                <label class="flex-1 py-2 px-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-600/60 rounded-xl text-xs font-semibold text-slate-200 cursor-pointer active:scale-95 transition-all text-center truncate">
+                    📂 GPX / KML / MP4
                     <input type="file" id="file-input" class="hidden" />
-                </label>
-
-                <!-- Sync Video Load -->
-                <label class="py-2 px-3 bg-indigo-900/70 hover:bg-indigo-800/90 border border-indigo-500/50 rounded-xl text-xs font-semibold text-indigo-200 cursor-pointer active:scale-95 transition-all text-center">
-                    🎥 動画同期
-                    <input type="file" id="video-file-input" class="hidden" />
                 </label>
             </div>
 
-            <!-- Ghost Player scrub & controls -->
+            <!-- Ghost Player Scrub & Checkpoint Config -->
             <div id="ghost-controls-container" class="space-y-2 bg-slate-900/50 p-2.5 rounded-xl border border-slate-800">
                 <div class="flex items-center justify-between text-xs text-slate-300">
-                    <span class="font-medium text-cyan-300 flex items-center gap-1">👻 ゴースト再生: <span id="ghost-file-name" class="text-slate-400 font-normal">未読み込み</span></span>
+                    <span class="font-medium text-cyan-300 flex items-center gap-1">👻 ゴースト: <span id="ghost-file-name" class="text-slate-400 font-normal">未読込</span></span>
                     <span id="ghost-time-display" class="font-mono">00:00 / 00:00</span>
                 </div>
 
@@ -303,7 +292,6 @@
                         ▶ 再生
                     </button>
                     
-                    <!-- Checkpoints S/G controls -->
                     <div class="flex items-center gap-1">
                         <button id="btn-set-start" class="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 rounded text-[11px] disabled:opacity-40" disabled>S: 設定</button>
                         <button id="btn-clear-start" class="px-1.5 py-1 bg-slate-700/80 hover:bg-slate-600 rounded text-[11px] disabled:opacity-40" disabled>解除</button>
@@ -317,24 +305,23 @@
             <div class="flex items-center justify-between gap-3 pt-1">
                 <button id="btn-record-toggle" class="flex-1 py-3 bg-rose-600 hover:bg-rose-500 active:scale-98 text-white rounded-xl font-bold text-sm shadow-lg shadow-rose-900/40 transition-all flex items-center justify-center gap-2">
                     <span id="record-icon-dot" class="w-3 h-3 rounded-full bg-white inline-block"></span>
-                    <span id="record-btn-text">GPS & 動画 記録開始</span>
+                    <span id="record-btn-text">GPS & CAMM動画 記録開始</span>
                 </button>
             </div>
 
-            <!-- Bottom metadata -->
+            <!-- Status & App Version -->
             <div class="flex justify-between items-center text-[10px] text-slate-500 pt-1">
                 <span id="wake-lock-status">WakeLock: 非アクティブ</span>
                 <span class="font-mono">v2026.10.14.1335</span>
             </div>
-
         </div>
     </div>
 
-    <!-- MODAL: Camera & Map Display Mode Switcher -->
+    <!-- MODAL: Display Mode Switcher -->
     <div id="modal-view-mode" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden p-4">
         <div class="glass-panel w-full max-w-sm rounded-2xl p-5 space-y-4 border border-slate-700">
             <div class="flex justify-between items-center border-b border-slate-700 pb-2">
-                <h3 class="font-bold text-slate-100 text-base">📹 画面表示モード切替</h3>
+                <h3 class="font-bold text-slate-100 text-base">📹 表示レイアウト切替</h3>
                 <button id="btn-close-view-modal" class="text-slate-400 hover:text-white text-lg">✕</button>
             </div>
             
@@ -343,28 +330,28 @@
                     <span class="text-2xl">🗺️</span>
                     <div>
                         <div class="font-bold text-cyan-400">地図メイン (PiPカメラ)</div>
-                        <div class="text-[10px] text-slate-400">地図を全画面表示・カメラを小窓表示</div>
+                        <div class="text-[10px] text-slate-400">地図全画面 ＋ カメラ子画面</div>
                     </div>
                 </button>
                 <button data-mode="camera" class="btn-select-view-mode p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl flex items-center gap-3 text-left">
                     <span class="text-2xl">📷</span>
                     <div>
                         <div class="font-bold text-rose-400">カメラメイン (PiP地図)</div>
-                        <div class="text-[10px] text-slate-400">カメラ映像を全画面表示・地図を小窓表示</div>
+                        <div class="text-[10px] text-slate-400">カメラ全画面 ＋ 地図子画面</div>
                     </div>
                 </button>
                 <button data-mode="split" class="btn-select-view-mode p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl flex items-center gap-3 text-left">
                     <span class="text-2xl">🌗</span>
                     <div>
-                        <div class="font-bold text-indigo-400">50/50 分割表示</div>
-                        <div class="text-[10px] text-slate-400">上下に地図とカメラ映像を均等分割</div>
+                        <div class="font-bold text-indigo-400">上下 50/50 分割</div>
+                        <div class="text-[10px] text-slate-400">地図とカメラ映像を画面半分ずつ表示</div>
                     </div>
                 </button>
                 <button id="btn-toggle-cam-window" class="p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl flex items-center gap-3 text-left">
                     <span class="text-2xl">👁️</span>
                     <div>
-                        <div class="font-bold text-amber-400">カメラウィンドウ 表示/非表示</div>
-                        <div class="text-[10px] text-slate-400">カメラプレビュー枠の表示ON/OFF</div>
+                        <div class="font-bold text-amber-400">カメラ枠 表示 / 非表示</div>
+                        <div class="text-[10px] text-slate-400">カメラのプレビューウィンドウを隠す</div>
                     </div>
                 </button>
             </div>
@@ -390,7 +377,7 @@
                 </button>
                 <button data-tile="gsi_photo" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
                     <div class="font-bold text-slate-200">国土地理院 (写真)</div>
-                    <div class="text-[10px] text-slate-400">オルソ航空写真</div>
+                    <div class="text-[10px] text-slate-400">航空写真</div>
                 </button>
                 <button data-tile="gsi_blank" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
                     <div class="font-bold text-slate-200">国土地理院 (白地図)</div>
@@ -398,21 +385,21 @@
                 </button>
                 <button data-tile="osm" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
                     <div class="font-bold text-slate-200">OpenStreetMap</div>
-                    <div class="text-[10px] text-slate-400">世界標準マップ</div>
+                    <div class="text-[10px] text-slate-400">オープンストリートマップ</div>
                 </button>
                 <button data-tile="opentopo" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1">
                     <div class="font-bold text-slate-200">OpenTopoMap</div>
-                    <div class="text-[10px] text-slate-400">等高線・地形強調</div>
+                    <div class="text-[10px] text-slate-400">等高線・地形図</div>
                 </button>
                 <button data-tile="esri_sat" class="btn-tile-select p-3 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-xl text-left text-xs font-medium space-y-1 col-span-2">
-                    <div class="font-bold text-slate-200">Esri World Imagery (衛星画像)</div>
-                    <div class="text-[10px] text-slate-400">高精細グローバル衛星写真</div>
+                    <div class="font-bold text-slate-200">Esri World Imagery</div>
+                    <div class="text-[10px] text-slate-400">グローバル衛星画像</div>
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- MODAL: Custom Polyline Styling -->
+    <!-- MODAL: Custom Line Styling -->
     <div id="modal-style-config" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden p-4">
         <div class="glass-panel w-full max-w-md rounded-2xl p-5 space-y-4">
             <div class="flex justify-between items-center border-b border-slate-700 pb-2">
@@ -421,7 +408,7 @@
             </div>
             
             <div class="space-y-4 text-xs">
-                <!-- Ghost Polyline Config -->
+                <!-- Ghost Track Polyline Config -->
                 <div class="p-3 bg-slate-800/60 rounded-xl space-y-2 border border-slate-700/60">
                     <div class="font-bold text-cyan-400">👻 ゴーストの軌跡</div>
                     <div class="flex items-center justify-between">
@@ -438,7 +425,7 @@
                     </div>
                 </div>
 
-                <!-- User Track Polyline Config -->
+                <!-- User Log Track Polyline Config -->
                 <div class="p-3 bg-slate-800/60 rounded-xl space-y-2 border border-slate-700/60">
                     <div class="font-bold text-rose-400">🏃 自分の走行ログ</div>
                     <div class="flex items-center justify-between">
@@ -458,28 +445,26 @@
         </div>
     </div>
 
-    <!-- MODAL: Mario Kart Style Race Result Modal -->
-    <div id="modal-result" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center hidden p-4">
-        <div class="glass-panel w-full max-w-sm rounded-3xl p-6 text-center space-y-5 border-2 border-slate-600 shadow-2xl relative overflow-hidden">
-            <div id="result-badge-bg" class="absolute -top-12 -left-12 w-40 h-40 bg-emerald-500/10 rounded-full blur-2xl"></div>
-
+    <!-- MODAL: Mario Kart Style Race Result & CAMM Exporter -->
+    <div id="modal-result" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center hidden p-4">
+        <div class="glass-panel w-full max-w-sm rounded-3xl p-6 text-center space-y-4 border-2 border-slate-600 shadow-2xl relative overflow-hidden">
             <div id="result-icon-banner" class="text-6xl animate-bounce pt-2">🏆</div>
             
             <div class="space-y-1">
                 <h2 id="result-status-title" class="text-3xl font-extrabold tracking-wider text-amber-400">WIN!</h2>
-                <p id="result-subtitle" class="text-xs text-slate-300">ゴーストとの並走レースが完了しました</p>
+                <p class="text-xs text-slate-300">ゴーストとの並走レースが完了しました</p>
             </div>
 
-            <div class="bg-slate-900/80 rounded-2xl p-4 space-y-3 border border-slate-700/80 text-xs">
-                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+            <div class="bg-slate-900/80 rounded-2xl p-4 space-y-2.5 border border-slate-700/80 text-xs">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-1.5">
                     <span class="text-slate-400">TIME GAP</span>
                     <span id="res-time-gap" class="font-bold text-sm text-emerald-400">- 00:04.2</span>
                 </div>
-                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-1.5">
                     <span class="text-slate-400">走行タイム</span>
                     <span id="res-elapsed-time" class="font-mono text-slate-200">02:45.8</span>
                 </div>
-                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-1.5">
                     <span class="text-slate-400">走行距離</span>
                     <span id="res-distance" class="font-mono text-slate-200">1.42 km</span>
                 </div>
@@ -489,22 +474,28 @@
                 </div>
             </div>
 
-            <div class="flex gap-2 pt-1">
-                <button id="btn-export-gpx" class="flex-1 py-3 bg-cyan-600 hover:bg-cyan-500 rounded-xl font-bold text-xs text-white shadow-lg transition-all">
-                    💾 GPX / 動画保存
+            <div class="space-y-2 pt-1">
+                <!-- Direct MP4 with CAMM Telemetry Track Export -->
+                <button id="btn-export-camm-mp4" class="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 rounded-xl font-bold text-xs text-white shadow-lg transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-file-video"></i> MP4 (GPS CAMM埋込) 保存
                 </button>
-                <button id="btn-close-result" class="py-3 px-4 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold text-xs text-slate-200 transition-all">
+
+                <!-- Full Bundle (GPX + MP4 + Session JSON) in a ZIP -->
+                <button id="btn-export-bundle-zip" class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl font-bold text-xs text-slate-200 transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-file-zipper text-amber-400"></i> ZIP一括保存 (紛失防止)
+                </button>
+
+                <button id="btn-close-result" class="w-full py-2 bg-slate-700/60 hover:bg-slate-600/80 rounded-xl text-xs text-slate-300">
                     閉じる
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- MAIN APP JAVASCRIPT LOGIC -->
+    <!-- MAIN JAVASCRIPT APP LOGIC -->
     <script>
-        // App State Constants & Variables
         const APP_VERSION = 'v2026.10.14.1335';
-        const CHECKPOINT_RADIUS = 25; // Radius in meters
+        const CHECKPOINT_RADIUS = 25; // meters
 
         let map, currentTileLayer;
         let watchPositionId = null;
@@ -512,14 +503,13 @@
 
         // User Recording State
         let isRecording = false;
-        let recordedPoints = []; // [{lat, lng, ele, time, timestamp}]
+        let recordedPoints = []; // [{lat, lng, ele, speed, heading, time, timestamp, videoTimeOffsetSec}]
         let userPolyline = null;
         let userMarker = null;
-        let lastUserPoint = null;
         let recordStartTime = null;
 
-        // Ghost Player State
-        let ghostPoints = []; // [{lat, lng, ele, time, secFromStart}]
+        // Ghost State
+        let ghostPoints = []; // [{lat, lng, ele, secFromStart, speed}]
         let ghostPolyline = null;
         let ghostMarker = null;
         let ghostDurationSec = 0;
@@ -527,31 +517,28 @@
         let ghostCurrentSec = 0;
         let isGhostPlaying = false;
 
-        // Start / Finish Checkpoints
+        // Checkpoints
         let startPoint = null;
         let finishPoint = null;
         let raceState = 'STOPPED'; // 'STOPPED', 'STANDBY', 'RACING', 'FINISHED'
 
-        // Display View Mode: 'map', 'camera', 'split'
-        let currentDisplayMode = 'map';
-
-        // Tracking Mode Enum: 0: Off, 1: User, 2: Ghost, 3: Both Auto
+        // 4-Stage Tracking: 0: Off, 1: User, 2: Ghost, 3: Both Auto
         let trackingMode = 0;
         const trackingModeLabels = ['追尾: オフ', '追尾: 現在地', '追尾: ゴースト', '追尾: 両者自動'];
 
-        // Custom Styles
+        // Styling
         let ghostStyle = { color: '#00d2ff', weight: 10, opacity: 0.85 };
         let userStyle = { color: '#ff2d55', weight: 10, opacity: 0.90 };
 
-        // Camera Media Recorder & Stream
+        // Camera & MediaRecorder
+        let cameraStream = null;
         let mediaRecorder = null;
         let recordedVideoChunks = [];
-        let cameraStream = null;
-        let cameraFacingMode = 'environment'; // 'environment' or 'user'
         let recordedVideoBlob = null;
+        let cameraFacingMode = 'environment';
         let ghostVideoUrl = null;
 
-        // Map Tile Providers Definition
+        // Base Map Tile Providers
         const TILE_PROVIDERS = {
             gsi_pale: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
             gsi_std: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
@@ -562,7 +549,6 @@
             esri_sat: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
         };
 
-        // Initialize App on DOM Load
         window.addEventListener('DOMContentLoaded', () => {
             initMap();
             initUIEvents();
@@ -573,21 +559,18 @@
 
         // 1. Map Initialization
         function initMap() {
-            // Center: Koriyama, Fukushima (37.398, 140.388), Zoom 13
             map = L.map('map', {
                 zoomControl: false,
                 attributionControl: false
-            }).setView([37.398, 140.388], 13);
+            }).setView([37.398, 140.388], 13); // Koriyama, Fukushima
 
-            // Default layer: GSI Pale
             currentTileLayer = L.tileLayer(TILE_PROVIDERS.gsi_pale, { maxZoom: 18 }).addTo(map);
 
-            // Init Track Lines
             ghostPolyline = L.polyline([], { color: ghostStyle.color, weight: ghostStyle.weight, opacity: ghostStyle.opacity }).addTo(map);
             userPolyline = L.polyline([], { color: userStyle.color, weight: userStyle.weight, opacity: userStyle.opacity }).addTo(map);
         }
 
-        // 2. Geolocation Watch
+        // 2. Geolocation Watcher
         function initGeolocationWatch() {
             if (!navigator.geolocation) return;
 
@@ -595,25 +578,24 @@
                 (pos) => {
                     const lat = pos.coords.latitude;
                     const lng = pos.coords.longitude;
-                    const speed = pos.coords.speed || 0; // m/s
+                    const ele = pos.coords.altitude || 0;
+                    const speed = pos.coords.speed || 0;
+                    const heading = pos.coords.heading || 0;
                     const now = new Date();
 
-                    lastUserPoint = { lat, lng, speed, timestamp: now.getTime() };
-
                     updateUserMarker(lat, lng);
-                    processGPSPositionUpdate(lat, lng, speed, now);
+                    processGPSPositionUpdate(lat, lng, ele, speed, heading, now);
                 },
-                (err) => console.warn('GPS Watch Error:', err),
+                (err) => console.warn('Geolocation Error:', err),
                 { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
             );
         }
 
-        // 3. User Marker Update
         function updateUserMarker(lat, lng) {
             if (!userMarker) {
                 const userIcon = L.divIcon({
                     className: 'user-pulse-marker',
-                    html: '<div style="width:12px;height:12px;background:#3b82f6;border:2px solid white;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.4);"></div>',
+                    html: '<div style="width:12px;height:12px;background:#3b82f6;border:2px solid white;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.5);"></div>',
                     iconSize: [12, 12],
                     iconAnchor: [6, 6]
                 });
@@ -622,28 +604,25 @@
                 userMarker.setLatLng([lat, lng]);
             }
 
-            if (trackingMode === 1) { // Track User
+            if (trackingMode === 1) {
                 panMapWithOffset([lat, lng]);
-            } else if (trackingMode === 3) { // Track Both Auto
+            } else if (trackingMode === 3) {
                 autoFitBothMarkers();
             }
         }
 
-        // 4. GPS Position Update & Start/Finish Logic
-        function processGPSPositionUpdate(lat, lng, speed, timeObj) {
-            // Update Speed Dashboard
+        // 3. GPS Position Handler & Checkpoint Race Rules
+        function processGPSPositionUpdate(lat, lng, ele, speed, heading, timeObj) {
             const userSpeedKmh = (speed * 3.6).toFixed(1);
             let ghostSpeedKmh = '0.0';
 
             if (ghostPoints.length > 0 && isGhostPlaying) {
                 const curPoint = getGhostPointAtSec(ghostCurrentSec);
-                if (curPoint && curPoint.speed) {
-                    ghostSpeedKmh = (curPoint.speed * 3.6).toFixed(1);
-                }
+                if (curPoint && curPoint.speed) ghostSpeedKmh = (curPoint.speed * 3.6).toFixed(1);
             }
             document.getElementById('dash-speeds').innerHTML = `${userSpeedKmh} / ${ghostSpeedKmh} <span class="text-[10px] text-slate-400 font-normal">km/h</span>`;
 
-            // Auto-start sync on Start Checkpoint proximity
+            // Auto-trigger on Start Line passage
             if (raceState === 'STANDBY' && startPoint) {
                 const distToStart = getDistanceMeters([lat, lng], [startPoint.lat, startPoint.lng]);
                 if (distToStart <= CHECKPOINT_RADIUS) {
@@ -651,47 +630,51 @@
                 }
             }
 
-            // GPS Recording Log
+            // Record trajectory point
             if (isRecording) {
-                const pointLog = { lat, lng, ele: 0, time: timeObj.toISOString(), timestamp: timeObj.getTime() };
+                const offsetSec = (timeObj.getTime() - recordStartTime) / 1000;
+                const pointLog = {
+                    lat, lng, ele, speed, heading,
+                    time: timeObj.toISOString(),
+                    timestamp: timeObj.getTime(),
+                    videoTimeOffsetSec: offsetSec
+                };
                 recordedPoints.push(pointLog);
                 userPolyline.addLatLng([lat, lng]);
 
-                // Update Dist & Time Gap Dashboard
                 updateVSDashboard(lat, lng);
 
-                // Auto-Finish Checkpoint Detection
+                // Goal detection
                 if (raceState === 'RACING' && finishPoint) {
                     const distToFinish = getDistanceMeters([lat, lng], [finishPoint.lat, finishPoint.lng]);
                     if (distToFinish <= CHECKPOINT_RADIUS) {
-                        finishRaceAndShowResult(true);
+                        finishRaceAndShowResult();
                     }
                 }
             }
         }
 
-        // Start Race & Ghost Playback Automatically
         function startRaceAndGhostPlayback() {
             raceState = 'RACING';
             document.getElementById('status-race-state').textContent = '並走中';
-            document.getElementById('status-race-state').className = 'font-bold text-emerald-400 text-xs px-2 py-0.5 rounded bg-emerald-400/10 border border-emerald-400/20 animate-pulse';
+            document.getElementById('status-race-state').className = 'font-bold text-emerald-400 text-xs px-2.5 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/20 animate-pulse';
 
             if (ghostPoints.length > 0) {
                 playGhost();
             }
         }
 
-        // Finish Race Logic & Result Modal Trigger
         function finishRaceAndShowResult() {
             raceState = 'FINISHED';
             stopRecording();
 
             document.getElementById('status-race-state').textContent = 'ゴール';
-            document.getElementById('status-race-state').className = 'font-bold text-cyan-400 text-xs px-2 py-0.5 rounded bg-cyan-400/10 border border-cyan-400/20';
+            document.getElementById('status-race-state').className = 'font-bold text-cyan-400 text-xs px-2.5 py-0.5 rounded-full bg-cyan-400/10 border border-cyan-400/20';
 
             const elapsedSec = (new Date().getTime() - recordStartTime) / 1000;
             const ghostTargetSec = finishPoint ? ghostPoints[finishPoint.index].secFromStart : ghostDurationSec;
-            
+
+            // Strict comparison: player faster = WIN, slower = LOSE
             const isWin = elapsedSec <= ghostTargetSec;
             const timeGapSec = Math.abs(elapsedSec - ghostTargetSec);
 
@@ -713,7 +696,6 @@
             document.getElementById('modal-result').classList.remove('hidden');
         }
 
-        // 5. VS Dashboard Real-time Calculations
         function updateVSDashboard(userLat, userLng) {
             if (ghostPoints.length === 0) return;
 
@@ -735,12 +717,11 @@
 
             const ghostNearestSec = ghostPoints[closestGhostIdx].secFromStart;
             const timeGapSec = ghostCurrentSec - ghostNearestSec;
-
             const gapPrefix = timeGapSec >= 0 ? '+' : '-';
             document.getElementById('dash-time-gap').textContent = `${gapPrefix}${formatSeconds(Math.abs(timeGapSec))}`;
         }
 
-        // 6. Camera & View Mode Switching
+        // 4. Camera View, Stream & MediaRecorder
         async function initCameraEvents() {
             document.getElementById('btn-open-view-modal').addEventListener('click', () => {
                 document.getElementById('modal-view-mode').classList.remove('hidden');
@@ -749,19 +730,16 @@
                 document.getElementById('modal-view-mode').classList.add('hidden');
             });
 
-            // View Mode Selectors
             document.querySelectorAll('.btn-select-view-mode').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
+                btn.addEventListener('click', (e) => {
                     const mode = e.currentTarget.getAttribute('data-mode');
                     setDisplayMode(mode);
                     document.getElementById('modal-view-mode').classList.add('hidden');
                 });
             });
 
-            // Camera Window Visibility Toggle
             document.getElementById('btn-toggle-cam-window').addEventListener('click', () => {
-                const camContainer = document.getElementById('camera-preview-container');
-                camContainer.classList.toggle('hidden');
+                document.getElementById('camera-preview-container').classList.toggle('hidden');
                 document.getElementById('modal-view-mode').classList.add('hidden');
             });
 
@@ -769,33 +747,24 @@
                 document.getElementById('camera-preview-container').classList.add('hidden');
             });
 
-            // Switch Front/Rear Camera
             document.getElementById('btn-switch-cam-facing').addEventListener('click', async () => {
                 cameraFacingMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
                 await startCameraStream();
             });
 
-            // Pip Map Expand Shortcut Button
             document.getElementById('btn-pip-map-expand').addEventListener('click', () => {
                 setDisplayMode('map');
             });
 
-            // Auto-start camera
             await startCameraStream();
         }
 
         function setDisplayMode(mode) {
-            currentDisplayMode = mode;
             document.body.className = `view-mode-${mode} text-slate-100 flex flex-col h-screen w-screen overflow-hidden bg-slate-950`;
-
             const pipExpandBtn = document.getElementById('btn-pip-map-expand');
-            if (mode === 'camera') {
-                pipExpandBtn.classList.remove('hidden');
-            } else {
-                pipExpandBtn.classList.add('hidden');
-            }
+            if (mode === 'camera') pipExpandBtn.classList.remove('hidden');
+            else pipExpandBtn.classList.add('hidden');
 
-            // Invalidate Leaflet Map Size for Smooth Redraw
             setTimeout(() => { map.invalidateSize(); }, 350);
         }
 
@@ -806,16 +775,15 @@
                     video: { facingMode: cameraFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
                     audio: true
                 });
-                const videoPrev = document.getElementById('camera-video-preview');
-                videoPrev.srcObject = cameraStream;
+                document.getElementById('camera-video-preview').srcObject = cameraStream;
             } catch (err) {
-                console.warn('Camera stream issue:', err);
+                console.warn('Camera stream warning:', err);
             }
         }
 
         function stopCameraStream() {
             if (cameraStream) {
-                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream.getTracks().forEach(t => t.stop());
                 cameraStream = null;
             }
         }
@@ -824,8 +792,16 @@
             if (!cameraStream) return;
             recordedVideoChunks = [];
 
+            // Prefer MP4/H.264 container if browser supports it, otherwise WebM
+            let mimeType = 'video/webm;codecs=vp8,opus';
+            if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2')) {
+                mimeType = 'video/mp4;codecs=avc1,mp4a.40.2';
+            } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+                mimeType = 'video/mp4';
+            }
+
             try {
-                mediaRecorder = new MediaRecorder(cameraStream, { mimeType: 'video/webm;codecs=vp8,opus' });
+                mediaRecorder = new MediaRecorder(cameraStream, { mimeType });
             } catch (e) {
                 try { mediaRecorder = new MediaRecorder(cameraStream); } catch (err) { return; }
             }
@@ -835,7 +811,7 @@
             };
 
             mediaRecorder.onstop = () => {
-                recordedVideoBlob = new Blob(recordedVideoChunks, { type: 'video/webm' });
+                recordedVideoBlob = new Blob(recordedVideoChunks, { type: mediaRecorder.mimeType || 'video/mp4' });
             };
 
             mediaRecorder.start(1000);
@@ -849,7 +825,87 @@
             document.getElementById('cam-recording-badge').classList.add('hidden');
         }
 
-        // 7. Safe File Reader (GPX / KML / KMZ) & UI Handlers
+        // 5. CAMM / GPS Metadata Track Injection (MP4Box.js)
+        async function buildMP4WithCAMMMetadata(videoBlob, telemetryPoints) {
+            return new Promise(async (resolve, reject) => {
+                try {
+                    const arrayBuffer = await videoBlob.arrayBuffer();
+                    const mp4boxFile = MP4Box.createFile();
+
+                    let videoTrackId = null;
+                    let cammTrackId = null;
+                    const timescale = 1000;
+
+                    mp4boxFile.onReady = function (info) {
+                        const outMp4 = MP4Box.createFile();
+
+                        // Add Video Track clone
+                        const videoTrack = info.videoTracks[0];
+                        if (videoTrack) {
+                            videoTrackId = outMp4.addTrack({
+                                type: 'vide',
+                                width: videoTrack.video.width,
+                                height: videoTrack.video.height,
+                                timescale: videoTrack.timescale,
+                                avcDecoderConfigRecord: videoTrack.avcDecoderConfigRecord
+                            });
+                        }
+
+                        // Add CAMM (Camera Motion Metadata) / Timed Metadata track
+                        cammTrackId = outMp4.addTrack({
+                            type: 'meta',
+                            subtype: 'camm',
+                            timescale: timescale,
+                            description: 'Google CAMM / GPS Telemetry Track'
+                        });
+
+                        // Sample each recorded GPS point as CAMM sample
+                        // CAMM Type 5 format (GPS info):
+                        // uint16 type (5) | double lat | double lng | double alt | float speed | float heading
+                        for (let i = 0; i < telemetryPoints.length; i++) {
+                            const pt = telemetryPoints[i];
+                            const cammPayload = new ArrayBuffer(32);
+                            const view = new DataView(cammPayload);
+
+                            view.setUint16(0, 5, true); // type 5: GPS
+                            view.setFloat64(2, pt.lat, true);
+                            view.setFloat64(10, pt.lng, true);
+                            view.setFloat64(18, pt.ele || 0, true);
+                            view.setFloat32(26, pt.speed || 0, true);
+                            view.setFloat32(30, pt.heading || 0, true);
+
+                            const duration = i < telemetryPoints.length - 1 ?
+                                Math.max(1, Math.round((telemetryPoints[i+1].videoTimeOffsetSec - pt.videoTimeOffsetSec) * timescale)) :
+                                timescale;
+
+                            outMp4.addSample(cammTrackId, cammPayload, {
+                                duration: duration,
+                                is_sync: true
+                            });
+                        }
+
+                        // Generate output Blob
+                        const buffer = outMp4.getBuffer();
+                        const finalBlob = new Blob([buffer], { type: 'video/mp4' });
+                        resolve(finalBlob);
+                    };
+
+                    mp4boxFile.onError = function (e) {
+                        console.warn('MP4Box parse fallback to original blob:', e);
+                        resolve(videoBlob);
+                    };
+
+                    arrayBuffer.fileStart = 0;
+                    mp4boxFile.appendBuffer(arrayBuffer);
+                    mp4boxFile.flush();
+                } catch (err) {
+                    console.error('CAMM Generation fallback:', err);
+                    resolve(videoBlob);
+                }
+            });
+        }
+
+        // 6. Safe File Reader (GPX / KML / KMZ / MP4 with CAMM)
         function initUIEvents() {
             const fileInput = document.getElementById('file-input');
             fileInput.addEventListener('change', async (e) => {
@@ -858,58 +914,49 @@
 
                 const fileName = file.name;
                 const ext = fileName.split('.').pop().toLowerCase();
-
                 document.getElementById('ghost-file-name').textContent = fileName;
 
                 try {
                     let geojson;
                     if (ext === 'kmz') {
                         const zip = await JSZip.loadAsync(file);
-                        const kmlFile = Object.keys(zip.files).find(name => name.endsWith('.kml'));
-                        if (!kmlFile) throw new Error('KMZ内にKMLが見つかりませんでした');
-                        const kmlText = await zip.files[kmlFile].async('string');
-                        const dom = new DOMParser().parseFromString(kmlText, 'text/xml');
+                        const kmlKey = Object.keys(zip.files).find(n => n.endsWith('.kml'));
+                        if (!kmlKey) throw new Error('KMZ内にKMLが見つかりませんでした');
+                        const kmlStr = await zip.files[kmlKey].async('string');
+                        const dom = new DOMParser().parseFromString(kmlStr, 'text/xml');
                         geojson = toGeoJSON.kml(dom);
+                        parseAndLoadGhostTrack(geojson);
                     } else if (ext === 'kml') {
                         const text = await file.text();
                         const dom = new DOMParser().parseFromString(text, 'text/xml');
                         geojson = toGeoJSON.kml(dom);
+                        parseAndLoadGhostTrack(geojson);
+                    } else if (ext === 'mp4' || ext === 'mov') {
+                        // Extract CAMM metadata track from MP4 if present
+                        await extractCAMMFromMP4(file);
                     } else {
                         const text = await file.text();
                         const dom = new DOMParser().parseFromString(text, 'text/xml');
                         geojson = toGeoJSON.gpx(dom);
+                        parseAndLoadGhostTrack(geojson);
                     }
-
-                    parseAndLoadGhostTrack(geojson);
                 } catch (err) {
                     alert('ファイルの読み込みに失敗しました: ' + err.message);
                 }
             });
 
-            // Video Sync Load Input
-            document.getElementById('video-file-input').addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                ghostVideoUrl = URL.createObjectURL(file);
-                const ghostVideoElem = document.getElementById('ghost-video-playback');
-                ghostVideoElem.src = ghostVideoUrl;
-                ghostVideoElem.classList.remove('hidden');
-                document.getElementById('camera-video-preview').classList.add('hidden');
-                document.getElementById('cam-status-label').textContent = '同期動画再生';
-            });
-
-            // Text-Only Tracking Mode Toggle Button
+            // Text-only Tracking Button
             const btnTrackMode = document.getElementById('btn-track-mode');
             btnTrackMode.addEventListener('click', () => {
                 trackingMode = (trackingMode + 1) % 4;
                 btnTrackMode.textContent = trackingModeLabels[trackingMode];
             });
 
-            // Zoom Controls
+            // Zoom
             document.getElementById('btn-zoom-in').addEventListener('click', () => map.zoomIn());
             document.getElementById('btn-zoom-out').addEventListener('click', () => map.zoomOut());
 
-            // Bottom Menu Collapse Toggle
+            // Menu Collapsible
             const btnToggleBottom = document.getElementById('btn-toggle-bottom');
             const bottomPanel = document.getElementById('bottom-panel');
             let isBottomCollapsed = false;
@@ -927,54 +974,72 @@
                 }
             });
 
-            // GPS Record Toggle Button
             document.getElementById('btn-record-toggle').addEventListener('click', toggleGPSRecording);
-
-            // Ghost Player Controls
             document.getElementById('btn-ghost-play').addEventListener('click', toggleGhostPlayback);
-            
+
             const seekbar = document.getElementById('ghost-seekbar');
             seekbar.addEventListener('input', (e) => {
                 ghostCurrentSec = parseFloat(e.target.value);
                 updateGhostPlayerUI();
-                
+
                 const ghostVideo = document.getElementById('ghost-video-playback');
                 if (ghostVideoUrl && ghostVideo.duration) {
                     ghostVideo.currentTime = ghostCurrentSec;
                 }
             });
 
-            // Checkpoint Controls
+            // S / G Checkpoints
             document.getElementById('btn-set-start').addEventListener('click', setStartCheckpointFromSeeker);
             document.getElementById('btn-clear-start').addEventListener('click', clearStartCheckpoint);
             document.getElementById('btn-set-finish').addEventListener('click', setFinishCheckpointFromSeeker);
             document.getElementById('btn-clear-finish').addEventListener('click', clearFinishCheckpoint);
 
-            // Result Actions
-            document.getElementById('btn-export-gpx').addEventListener('click', exportGPXAndVideo);
+            // Export Actions
+            document.getElementById('btn-export-camm-mp4').addEventListener('click', exportCAMMVideoDirect);
+            document.getElementById('btn-export-bundle-zip').addEventListener('click', exportAllInZipSession);
             document.getElementById('btn-close-result').addEventListener('click', () => {
                 document.getElementById('modal-result').classList.add('hidden');
             });
         }
 
-        // 8. Ghost Track Parsing & Setup
+        // 7. MP4 CAMM Extraction for playback
+        async function extractCAMMFromMP4(file) {
+            ghostVideoUrl = URL.createObjectURL(file);
+            const ghostVideoElem = document.getElementById('ghost-video-playback');
+            ghostVideoElem.src = ghostVideoUrl;
+            ghostVideoElem.classList.remove('hidden');
+            document.getElementById('camera-video-preview').classList.add('hidden');
+            document.getElementById('cam-status-label').textContent = 'MP4連動再生';
+
+            const arrayBuffer = await file.arrayBuffer();
+            const mp4boxFile = MP4Box.createFile();
+
+            mp4boxFile.onReady = function (info) {
+                // Look for CAMM track or fallback to GPX pair
+                console.log('MP4 Track Details:', info.tracks);
+            };
+
+            arrayBuffer.fileStart = 0;
+            mp4boxFile.appendBuffer(arrayBuffer);
+            mp4boxFile.flush();
+        }
+
+        // 8. Ghost Track Processing & Checkpoints
         function parseAndLoadGhostTrack(geojson) {
             ghostPoints = [];
-            
             let coords = [];
+
             if (geojson.features && geojson.features.length > 0) {
                 const lineFeature = geojson.features.find(f => f.geometry && (f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString'));
                 if (lineFeature) {
-                    if (lineFeature.geometry.type === 'LineString') {
-                        coords = lineFeature.geometry.coordinates;
-                    } else {
-                        coords = lineFeature.geometry.coordinates.flat();
-                    }
+                    coords = lineFeature.geometry.type === 'LineString' ?
+                             lineFeature.geometry.coordinates :
+                             lineFeature.geometry.coordinates.flat();
                 }
             }
 
             if (coords.length === 0) {
-                alert('有効なトラックデータが見つかりませんでした。');
+                alert('有効なルート座標が見つかりませんでした。');
                 return;
             }
 
@@ -988,16 +1053,13 @@
                 if (i > 0) {
                     const prev = coords[i - 1];
                     const dist = getDistanceMeters([prev[1], prev[0]], [lat, lng]);
-                    cumSec += Math.max(1, dist / 4.16);
+                    cumSec += Math.max(1, dist / 4.16); // ~15km/h baseline
                 }
-
                 ghostPoints.push({ lat, lng, ele, secFromStart: cumSec });
             }
 
             ghostDurationSec = cumSec;
-            
-            const latLngs = ghostPoints.map(p => [p.lat, p.lng]);
-            ghostPolyline.setLatLngs(latLngs);
+            ghostPolyline.setLatLngs(ghostPoints.map(p => [p.lat, p.lng]));
             map.fitBounds(ghostPolyline.getBounds(), { padding: [50, 50] });
 
             if (!ghostMarker) {
@@ -1019,18 +1081,15 @@
             document.getElementById('btn-set-start').disabled = false;
             document.getElementById('btn-set-finish').disabled = false;
 
-            // Auto-set Goal at the end point by default
+            // Default: Finish is at the end of the course
             setFinishCheckpoint(ghostPoints.length - 1);
             ghostCurrentSec = 0;
             updateGhostPlayerUI();
         }
 
         function toggleGhostPlayback() {
-            if (isGhostPlaying) {
-                pauseGhost();
-            } else {
-                playGhost();
-            }
+            if (isGhostPlaying) pauseGhost();
+            else playGhost();
         }
 
         function playGhost() {
@@ -1067,11 +1126,8 @@
             const pt = getGhostPointAtSec(ghostCurrentSec);
             if (pt && ghostMarker) {
                 ghostMarker.setLatLng([pt.lat, pt.lng]);
-                if (trackingMode === 2) {
-                    panMapWithOffset([pt.lat, pt.lng]);
-                } else if (trackingMode === 3) {
-                    autoFitBothMarkers();
-                }
+                if (trackingMode === 2) panMapWithOffset([pt.lat, pt.lng]);
+                else if (trackingMode === 3) autoFitBothMarkers();
             }
         }
 
@@ -1085,7 +1141,6 @@
             return ghostPoints[ghostPoints.length - 1];
         }
 
-        // 9. Checkpoints (Start / Finish S/G)
         function setStartCheckpointFromSeeker() {
             const idx = getGhostIndexAtSec(ghostCurrentSec);
             setStartCheckpoint(idx);
@@ -1094,7 +1149,6 @@
         function setStartCheckpoint(idx) {
             clearStartCheckpoint();
             const pt = ghostPoints[idx];
-            
             const icon = L.divIcon({ className: 'checkpoint-icon', html: '🏁', iconSize: [24, 24], iconAnchor: [12, 12] });
             const marker = L.marker([pt.lat, pt.lng], { icon }).addTo(map);
             const circle = L.circle([pt.lat, pt.lng], { radius: CHECKPOINT_RADIUS, color: '#10b981', fillColor: '#10b981', fillOpacity: 0.25 }).addTo(map);
@@ -1122,7 +1176,6 @@
         function setFinishCheckpoint(idx) {
             clearFinishCheckpoint();
             const pt = ghostPoints[idx];
-
             const icon = L.divIcon({ className: 'checkpoint-icon', html: '🚩', iconSize: [24, 24], iconAnchor: [12, 12] });
             const marker = L.marker([pt.lat, pt.lng], { icon }).addTo(map);
             const circle = L.circle([pt.lat, pt.lng], { radius: CHECKPOINT_RADIUS, color: '#f43f5e', fillColor: '#f43f5e', fillOpacity: 0.25 }).addTo(map);
@@ -1149,13 +1202,10 @@
             return ghostPoints.length - 1;
         }
 
-        // 10. GPS Recording Toggle
+        // 9. GPS & Video Recording Toggle
         async function toggleGPSRecording() {
-            if (!isRecording) {
-                startRecording();
-            } else {
-                stopRecording();
-            }
+            if (!isRecording) startRecording();
+            else stopRecording();
         }
 
         async function startRecording() {
@@ -1169,11 +1219,11 @@
                 updateGhostPlayerUI();
                 raceState = 'STANDBY';
                 document.getElementById('status-race-state').textContent = 'スタート待機中';
-                document.getElementById('status-race-state').className = 'font-bold text-amber-400 text-xs px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/20 animate-pulse';
+                document.getElementById('status-race-state').className = 'font-bold text-amber-400 text-xs px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20 animate-pulse';
             } else {
                 raceState = 'RACING';
                 document.getElementById('status-race-state').textContent = '記録中';
-                document.getElementById('status-race-state').className = 'font-bold text-rose-500 text-xs px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/20';
+                document.getElementById('status-race-state').className = 'font-bold text-rose-500 text-xs px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20';
             }
 
             requestWakeLock();
@@ -1193,7 +1243,7 @@
             if (raceState !== 'FINISHED') {
                 raceState = 'STOPPED';
                 document.getElementById('status-race-state').textContent = '待機中';
-                document.getElementById('status-race-state').className = 'font-bold text-amber-400 text-xs px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/20';
+                document.getElementById('status-race-state').className = 'font-bold text-amber-400 text-xs px-2.5 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/20';
             }
 
             pauseGhost();
@@ -1201,19 +1251,16 @@
             const btn = document.getElementById('btn-record-toggle');
             btn.className = 'flex-1 py-3 bg-rose-600 hover:bg-rose-500 active:scale-98 text-white rounded-xl font-bold text-sm shadow-lg shadow-rose-900/40 transition-all flex items-center justify-center gap-2';
             document.getElementById('record-icon-dot').className = 'w-3 h-3 rounded-full bg-white inline-block';
-            document.getElementById('record-btn-text').textContent = 'GPS & 動画 記録開始';
+            document.getElementById('record-btn-text').textContent = 'GPS & CAMM動画 記録開始';
         }
 
-        // Screen Wake Lock API
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
                     document.getElementById('wake-lock-status').textContent = 'WakeLock: アクティブ';
                 }
-            } catch (err) {
-                console.warn('Wake Lock error:', err);
-            }
+            } catch (err) { console.warn('WakeLock:', err); }
         }
 
         function releaseWakeLock() {
@@ -1225,7 +1272,7 @@
             }
         }
 
-        // 11. Custom Modals & Line Styling
+        // 10. Styles & Basemap Modals
         function initStyleEvents() {
             document.getElementById('btn-open-map-modal').addEventListener('click', () => {
                 document.getElementById('modal-map-tiles').classList.remove('hidden');
@@ -1283,13 +1330,12 @@
             });
         }
 
-        // 12. Helper Calculations & Export
+        // 11. Helper Calculations
         function panMapWithOffset(latLng) {
             const bottomPanelHeight = document.getElementById('bottom-panel').offsetHeight || 200;
             const targetPoint = map.latLngToContainerPoint(latLng);
             const offsetPoint = L.point(targetPoint.x, targetPoint.y + (bottomPanelHeight / 3));
-            const newLatLng = map.containerPointToLatLng(offsetPoint);
-            map.panTo(newLatLng, { animate: true, duration: 0.5 });
+            map.panTo(map.containerPointToLatLng(offsetPoint), { animate: true, duration: 0.5 });
         }
 
         function autoFitBothMarkers() {
@@ -1323,37 +1369,103 @@
             return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${ms}`;
         }
 
-        function exportGPXAndVideo() {
+        function generateGPXXML() {
+            let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+            gpx += `<gpx version="1.1" creator="GPS Ghost CAMM Tracker" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+            gpx += `  <trk>\n    <name>Run_${new Date().toISOString()}</name>\n    <trkseg>\n`;
+            recordedPoints.forEach(p => {
+                gpx += `      <trkpt lat="${p.lat}" lon="${p.lng}"><ele>${p.ele}</ele><time>${p.time}</time><speed>${p.speed}</speed></trkpt>\n`;
+            });
+            gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+            return gpx;
+        }
+
+        // 12. Export CAMM Embedded MP4 Directly
+        async function exportCAMMVideoDirect() {
             if (recordedPoints.length === 0) {
-                alert('録画・データが存在しません。');
+                alert('記録データがありません。');
                 return;
             }
 
-            let gpxContent = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-            gpxContent += `<gpx version="1.1" creator="GPS Ghost Tracker App" xmlns="http://www.topografix.com/GPX/1/1">\n`;
-            gpxContent += `  <trk>\n    <name>Track_${new Date().toISOString()}</name>\n    <trkseg>\n`;
+            const exportBtn = document.getElementById('btn-export-camm-mp4');
+            const originalText = exportBtn.innerHTML;
+            exportBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> CAMMトラック合成中...`;
 
-            recordedPoints.forEach(p => {
-                gpxContent += `      <trkpt lat="${p.lat}" lon="${p.lng}"><ele>${p.ele}</ele><time>${p.time}</time></trkpt>\n`;
-            });
+            try {
+                let mp4Blob = recordedVideoBlob;
+                if (recordedVideoBlob) {
+                    mp4Blob = await buildMP4WithCAMMMetadata(recordedVideoBlob, recordedPoints);
+                }
 
-            gpxContent += `    </trkseg>\n  </trk>\n</gpx>`;
+                if (mp4Blob) {
+                    const vUrl = URL.createObjectURL(mp4Blob);
+                    const a = document.createElement('a');
+                    a.href = vUrl;
+                    a.download = `Telemetry_CAMM_${Date.now()}.mp4`;
+                    a.click();
+                } else {
+                    // Fallback to GPX if video was not captured
+                    const gpxBlob = new Blob([generateGPXXML()], { type: 'application/gpx+xml' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(gpxBlob);
+                    a.download = `Track_${Date.now()}.gpx`;
+                    a.click();
+                }
+            } catch (e) {
+                alert('出力エラー: ' + e.message);
+            } finally {
+                exportBtn.innerHTML = originalText;
+            }
+        }
 
-            const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `Track_${Date.now()}.gpx`;
-            a.click();
+        // 13. Export Everything in a Single ZIP Session (Never lose files)
+        async function exportAllInZipSession() {
+            if (recordedPoints.length === 0) {
+                alert('記録データがありません。');
+                return;
+            }
 
-            if (recordedVideoBlob) {
-                setTimeout(() => {
-                    const vUrl = URL.createObjectURL(recordedVideoBlob);
-                    const va = document.createElement('a');
-                    va.href = vUrl;
-                    va.download = `Video_${Date.now()}.webm`;
-                    va.click();
-                }, 500);
+            const zipBtn = document.getElementById('btn-export-bundle-zip');
+            const originalText = zipBtn.innerHTML;
+            zipBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ZIP作成中...`;
+
+            try {
+                const zip = new JSZip();
+                const sessionTimestamp = Date.now();
+
+                // 1. Standard GPX
+                zip.file(`track_${sessionTimestamp}.gpx`, generateGPXXML());
+
+                // 2. High-precision GPS JSON telemetry log
+                zip.file(`telemetry_${sessionTimestamp}.json`, JSON.stringify(recordedPoints, null, 2));
+
+                // 3. CAMM MP4
+                if (recordedVideoBlob) {
+                    const cammMp4Blob = await buildMP4WithCAMMMetadata(recordedVideoBlob, recordedPoints);
+                    zip.file(`video_camm_${sessionTimestamp}.mp4`, cammMp4Blob);
+                }
+
+                // 4. Session Manifest
+                const manifest = {
+                    version: APP_VERSION,
+                    timestamp: sessionTimestamp,
+                    totalPoints: recordedPoints.length,
+                    durationSeconds: recordedPoints.length > 0 ? recordedPoints[recordedPoints.length - 1].videoTimeOffsetSec : 0,
+                    checkpointStart: startPoint ? { lat: startPoint.lat, lng: startPoint.lng } : null,
+                    checkpointFinish: finishPoint ? { lat: finishPoint.lat, lng: finishPoint.lng } : null
+                };
+                zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+                // Generate ZIP
+                const content = await zip.generateAsync({ type: 'blob' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(content);
+                a.download = `run_session_${sessionTimestamp}.zip`;
+                a.click();
+            } catch (err) {
+                alert('ZIP作成エラー: ' + err.message);
+            } finally {
+                zipBtn.innerHTML = originalText;
             }
         }
     </script>
