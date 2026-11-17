@@ -201,12 +201,19 @@
             <!-- Video Stream Element -->
             <div class="relative flex-1 w-full h-full bg-black overflow-hidden">
                 <video id="camera-preview" autoplay playsinline muted class="w-full h-full object-cover"></video>
+                <video id="camm-playback-video" playsinline class="w-full h-full object-contain bg-black hidden"></video>
 
                 <!-- Live REC Badge + Timer -->
                 <div id="cam-rec-badge" class="absolute top-2 left-2 px-2 py-0.5 bg-rose-600/95 text-[10px] font-bold rounded-full text-white hidden flex items-center gap-1.5 shadow-lg">
                     <span class="w-2 h-2 rounded-full bg-white animate-ping"></span>
                     <span>REC</span>
                     <span id="cam-rec-timer" class="font-mono">00:00</span>
+                </div>
+
+                <!-- Playback Mode Badge -->
+                <div id="cam-playback-badge" class="absolute top-2 left-2 px-2 py-0.5 bg-cyan-600/95 text-[10px] font-bold rounded-full text-white hidden flex items-center gap-1.5 shadow-lg">
+                    <i class="fa-solid fa-film"></i>
+                    <span>CAMM再生中</span>
                 </div>
 
                 <!-- Live Video Buffer Size Badge -->
@@ -261,6 +268,11 @@
         <button id="btn-toggle-cam-overlay" type="button" aria-label="カメラ表示切替" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition">
             👁️
         </button>
+        <button id="btn-open-camm-file" type="button" aria-label="CAMM動画読込" title="CAMM動画/ZIP読み込み" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition border border-cyan-500/40">
+            📂
+        </button>
+        <!-- iOS Safari compatible unrestricted file input (extension checked in JS) -->
+        <input type="file" id="input-camm-file" class="hidden" />
     </div>
 
     <!-- BOTTOM RECORDING & EXPORT CONTROL PANEL -->
@@ -273,6 +285,40 @@
 
         <!-- Collapsible Body -->
         <div id="bottom-panel-body" class="p-3.5 sm:p-4 max-w-xl mx-auto space-y-3">
+            <!-- CAMM VIDEO PLAYBACK SCRUBBER PANEL (Shown when a CAMM video/ZIP is loaded) -->
+            <div id="camm-player-panel" class="hidden bg-slate-900/95 border border-cyan-500/50 rounded-2xl p-3 space-y-2.5 shadow-inner">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="text-xs">🎬</span>
+                        <span id="camm-loaded-title" class="text-xs font-extrabold text-cyan-300 truncate">CAMM動画プレイヤー</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <span id="camm-telemetry-badge" class="text-[10px] font-mono bg-slate-800 text-emerald-300 px-2 py-0.5 rounded-md">
+                            0 pt
+                        </span>
+                        <button id="btn-close-camm-player" type="button" title="プレイヤーを閉じてカメラに戻る" class="px-2 py-0.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-white rounded-md text-[10px] font-bold transition">
+                            ✕ 終了
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Playback Controls & Interactive Timeline Scrubber -->
+                <div class="flex items-center gap-2.5">
+                    <button id="btn-camm-play-pause" type="button" class="w-10 h-10 shrink-0 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white flex items-center justify-center shadow transition">
+                        <i id="icon-camm-play-pause" class="fa-solid fa-play"></i>
+                    </button>
+
+                    <div class="flex-1 space-y-1">
+                        <input type="range" id="slider-camm-seek" min="0" max="100" step="0.05" value="0" class="w-full accent-cyan-400 cursor-pointer h-2 bg-slate-700 rounded-lg" />
+                        <div class="flex items-center justify-between text-[10px] font-mono text-slate-300">
+                            <span id="camm-time-current">00:00.0</span>
+                            <span id="camm-coord-readout" class="text-cyan-300 truncate max-w-[160px]">---, ---</span>
+                            <span id="camm-time-total">00:00.0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- PROMINENT CAMM MP4 EXPORT PANEL (Shown when recorded data exists) -->
             <div id="export-action-panel" class="hidden bg-slate-900/90 border border-cyan-500/40 rounded-2xl p-3 space-y-2.5 shadow-inner">
                 <div class="flex items-center justify-between text-[11px]">
@@ -310,21 +356,25 @@
             </div>
 
             <!-- Tracking Mode Toggle (3-Stage Text Only) & Main Record Button -->
-            <div class="flex items-center gap-2.5">
+            <div class="flex items-center gap-2">
                 <button id="btn-track-mode" type="button" class="w-1/3 py-3.5 px-2 bg-slate-800/95 hover:bg-slate-700 border border-slate-600/80 rounded-xl text-xs font-bold text-cyan-400 active:scale-95 transition text-center truncate">
                     追尾: 現在地
                 </button>
 
-                <button id="btn-record-toggle" type="button" class="flex-1 py-3.5 px-4 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-sm shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-2">
+                <button id="btn-load-camm-inline" type="button" class="py-3.5 px-3 bg-slate-800/95 hover:bg-slate-700 border border-cyan-500/50 rounded-xl text-xs font-bold text-cyan-300 active:scale-95 transition flex items-center justify-center gap-1 shrink-0">
+                    <span>📂 CAMM読込</span>
+                </button>
+
+                <button id="btn-record-toggle" type="button" class="flex-1 py-3.5 px-3 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs sm:text-sm shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-2">
                     <span id="record-btn-dot" class="w-3 h-3 rounded-full bg-white inline-block"></span>
-                    <span id="record-btn-label">記録開始 (GPS + カメラ)</span>
+                    <span id="record-btn-label">記録開始</span>
                 </button>
             </div>
 
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.17.1620</span>
+                <span class="font-mono text-slate-400">v2026.11.17.1630</span>
             </div>
         </div>
     </div>
@@ -391,7 +441,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.17.1620';
+        const APP_VERSION = 'v2026.11.17.1630';
 
         // Map & Geolocation State
         let map = null;
@@ -433,6 +483,14 @@
         let cachedCammResult = null;
         let cameraFacingMode = 'environment';
         let currentLayoutMode = 'map';
+
+        // CAMM Video Playback & Map Sync State
+        let cammPlaybackPoints = [];
+        let cammPlaybackPolyline = null;
+        let cammPlaybackMarker = null;
+        let cammVideoObjectUrl = null;
+        let isScrubbingCamm = false;
+        let isCammPlaybackActive = false;
 
         // Basemap Definitions
         const BASEMAPS = [
@@ -540,6 +598,14 @@
                 color: trackStyle.color,
                 weight: trackStyle.weight,
                 opacity: trackStyle.opacity,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }).addTo(map);
+
+            cammPlaybackPolyline = L.polyline([], {
+                color: '#00d2ff',
+                weight: 8,
+                opacity: 0.85,
                 lineCap: 'round',
                 lineJoin: 'round'
             }).addTo(map);
@@ -742,6 +808,19 @@
 
         function applyTrackingCamera() {
             if (!map) return;
+            if (isCammPlaybackActive && cammPlaybackMarker) {
+                if (trackingMode === 0) {
+                    panWithBottomOffset(cammPlaybackMarker.getLatLng());
+                } else if (trackingMode === 1 && cammPlaybackPoints.length > 1) {
+                    const bounds = cammPlaybackPolyline.getBounds();
+                    if (bounds.isValid()) {
+                        const panel = document.getElementById('bottom-control-panel');
+                        const bottomPad = (panel && !isBottomCollapsed) ? panel.offsetHeight + 24 : 40;
+                        map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad] });
+                    }
+                }
+                return;
+            }
             if (trackingMode === 0 && currentPosition) {
                 panWithBottomOffset([currentPosition.lat, currentPosition.lng]);
             } else if (trackingMode === 1 && recordedPoints.length > 1) {
@@ -968,9 +1047,9 @@
             await stopMediaRecordingAndFlush();
 
             recBtn.disabled = false;
-            recBtn.className = 'flex-1 py-3.5 px-4 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-sm shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-2';
+            recBtn.className = 'flex-1 py-3.5 px-3 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs sm:text-sm shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-2';
             document.getElementById('record-btn-dot').className = 'w-3 h-3 rounded-full bg-white inline-block';
-            document.getElementById('record-btn-label').textContent = '記録開始 (GPS + カメラ)';
+            document.getElementById('record-btn-label').textContent = '記録開始';
 
             releaseScreenWakeLock();
             await prepareExportPanel();
@@ -1406,6 +1485,450 @@ ${trkpts}
             document.getElementById('toast-close').addEventListener('click', () => {
                 document.getElementById('toast-banner').classList.add('hidden');
             });
+
+            // CAMM File Import & Playback Scrubber Bindings
+            const fileInput = document.getElementById('input-camm-file');
+            document.getElementById('btn-open-camm-file').addEventListener('click', () => fileInput.click());
+            document.getElementById('btn-load-camm-inline').addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', handleCammFileSelected);
+
+            document.getElementById('btn-camm-play-pause').addEventListener('click', toggleCammPlayPause);
+            document.getElementById('btn-close-camm-player').addEventListener('click', closeCammPlayer);
+
+            const seekSlider = document.getElementById('slider-camm-seek');
+            const playbackVideo = document.getElementById('camm-playback-video');
+
+            seekSlider.addEventListener('input', (e) => {
+                isScrubbingCamm = true;
+                const targetSec = parseFloat(e.target.value) || 0;
+                if (playbackVideo && Number.isFinite(playbackVideo.duration)) {
+                    playbackVideo.currentTime = targetSec;
+                }
+                syncCammMapToTime(targetSec);
+            });
+
+            seekSlider.addEventListener('change', () => {
+                isScrubbingCamm = false;
+            });
+
+            playbackVideo.addEventListener('loadedmetadata', () => {
+                const dur = Number.isFinite(playbackVideo.duration) ? playbackVideo.duration : 0;
+                seekSlider.max = dur > 0 ? dur : 100;
+                document.getElementById('camm-time-total').textContent = formatMMSSDecimal(dur);
+                syncCammMapToTime(0);
+            });
+
+            playbackVideo.addEventListener('timeupdate', () => {
+                const cur = playbackVideo.currentTime || 0;
+                if (!isScrubbingCamm) {
+                    seekSlider.value = cur;
+                }
+                syncCammMapToTime(cur);
+            });
+
+            playbackVideo.addEventListener('play', () => {
+                document.getElementById('icon-camm-play-pause').className = 'fa-solid fa-pause';
+            });
+
+            playbackVideo.addEventListener('pause', () => {
+                document.getElementById('icon-camm-play-pause').className = 'fa-solid fa-play';
+            });
+
+            playbackVideo.addEventListener('ended', () => {
+                document.getElementById('icon-camm-play-pause').className = 'fa-solid fa-play';
+            });
+        }
+
+        // 9B. CAMM MP4 / ZIP Loader, Parser & Map Synchronizer
+        async function handleCammFileSelected(event) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+
+            if (isRecording) {
+                showToast('録画中は読み込み不可', '現在の記録を停止してからファイルを読み込んでください。', 'warning');
+                return;
+            }
+
+            const lowerName = file.name.toLowerCase();
+            const isMp4 = lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.m4v') || lowerName.endsWith('.webm');
+            const isZip = lowerName.endsWith('.zip');
+
+            if (!isMp4 && !isZip) {
+                showToast('非対応ファイル形式', 'CAMM形式のMP4動画、またはCAMMセッションZIPファイルを選択してください。', 'warning');
+                return;
+            }
+
+            try {
+                let videoBlob = null;
+                let extractedPoints = [];
+
+                if (isZip) {
+                    const zip = await JSZip.loadAsync(file);
+                    let videoEntry = null;
+                    let jsonEntry = null;
+                    let cammBinEntry = null;
+                    let gpxEntry = null;
+
+                    zip.forEach((relPath, entry) => {
+                        if (entry.dir) return;
+                        const low = relPath.toLowerCase();
+                        if (!videoEntry && (low.endsWith('.mp4') || low.endsWith('.webm'))) videoEntry = entry;
+                        if (low.endsWith('telemetry.json')) jsonEntry = entry;
+                        if (low.endsWith('.camm.bin')) cammBinEntry = entry;
+                        if (low.endsWith('.gpx')) gpxEntry = entry;
+                    });
+
+                    if (videoEntry) {
+                        const vBuf = await videoEntry.async('arraybuffer');
+                        videoBlob = new Blob([vBuf], { type: videoEntry.name.toLowerCase().endsWith('.webm') ? 'video/webm' : 'video/mp4' });
+                    }
+
+                    if (cammBinEntry) {
+                        const binBuf = await cammBinEntry.async('arraybuffer');
+                        extractedPoints = parseRawCammBinaryBuffer(binBuf);
+                    } else if (jsonEntry) {
+                        const jsonText = await jsonEntry.async('text');
+                        const parsed = JSON.parse(jsonText);
+                        if (Array.isArray(parsed.points)) {
+                            extractedPoints = parsed.points;
+                        }
+                    } else if (gpxEntry) {
+                        const gpxText = await gpxEntry.async('text');
+                        extractedPoints = parseGpxToTelemetryPoints(gpxText);
+                    }
+
+                    if (extractedPoints.length === 0 && videoBlob) {
+                        const vBuf = await videoBlob.arrayBuffer();
+                        extractedPoints = await extractCammSamplesFromMp4Buffer(vBuf);
+                    }
+                } else {
+                    videoBlob = file;
+                    const arrayBuf = await file.arrayBuffer();
+                    extractedPoints = await extractCammSamplesFromMp4Buffer(arrayBuf);
+                }
+
+                if (!videoBlob) {
+                    showToast('動画が見つかりません', 'ファイル内に再生可能な動画データが含まれていませんでした。', 'warning');
+                    return;
+                }
+
+                activateCammPlaybackSession(file.name, videoBlob, extractedPoints);
+            } catch (err) {
+                console.error('CAMM file load error:', err);
+                showToast('読み込みエラー', `ファイルの解析に失敗しました: ${err.message}`, 'warning');
+            }
+        }
+
+        function parseRawCammBinaryBuffer(arrayBuffer) {
+            const view = new DataView(arrayBuffer);
+            const recordSize = 42;
+            const count = Math.floor(arrayBuffer.byteLength / recordSize);
+            const pts = [];
+
+            for (let i = 0; i < count; i++) {
+                const offset = i * recordSize;
+                const tsMs = view.getFloat64(offset + 0, true);
+                const packetType = view.getUint16(offset + 8, true);
+                if (packetType === 5) {
+                    const lat = view.getFloat64(offset + 10, true);
+                    const lng = view.getFloat64(offset + 18, true);
+                    const ele = view.getFloat64(offset + 26, true);
+                    const speed = view.getFloat32(offset + 34, true);
+                    const heading = view.getFloat32(offset + 38, true);
+                    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                        pts.push({ lat, lng, ele, speed, heading, timestampOffsetMs: tsMs });
+                    }
+                }
+            }
+            return pts;
+        }
+
+        function parseGpxToTelemetryPoints(gpxText) {
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(gpxText, 'application/xml');
+            const trkpts = Array.from(xml.querySelectorAll('trkpt'));
+            if (trkpts.length === 0) return [];
+
+            let baseMs = null;
+            return trkpts.map((el, idx) => {
+                const lat = parseFloat(el.getAttribute('lat'));
+                const lng = parseFloat(el.getAttribute('lon'));
+                const eleEl = el.querySelector('ele');
+                const timeEl = el.querySelector('time');
+                const ele = eleEl ? parseFloat(eleEl.textContent) || 0 : 0;
+                let offsetMs = idx * 1000;
+                if (timeEl && timeEl.textContent) {
+                    const parsedTime = Date.parse(timeEl.textContent);
+                    if (!Number.isNaN(parsedTime)) {
+                        if (baseMs === null) baseMs = parsedTime;
+                        offsetMs = Math.max(0, parsedTime - baseMs);
+                    }
+                }
+                return { lat, lng, ele, speed: 0, heading: 0, timestampOffsetMs: offsetMs };
+            }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+        }
+
+        function extractCammSamplesFromMp4Buffer(arrayBuffer) {
+            return new Promise((resolve) => {
+                if (typeof MP4Box === 'undefined') {
+                    resolve([]);
+                    return;
+                }
+
+                try {
+                    const mp4boxfile = MP4Box.createFile();
+                    const extracted = [];
+                    let cammTrackId = null;
+                    let cammTimescale = 1000;
+                    let accumulatedTicks = 0;
+
+                    mp4boxfile.onReady = function (info) {
+                        const tracks = info.tracks || [];
+                        const cammTrack = tracks.find(t =>
+                            (t.codec && t.codec.toLowerCase().includes('camm')) ||
+                            (t.type && t.type.toLowerCase() === 'meta') ||
+                            (t.name && t.name.toLowerCase().includes('camm'))
+                        );
+
+                        if (!cammTrack) {
+                            resolve([]);
+                            return;
+                        }
+
+                        cammTrackId = cammTrack.id;
+                        cammTimescale = cammTrack.timescale || 1000;
+                        mp4boxfile.setExtractionOptions(cammTrackId, null, { nbSamples: 50000 });
+                        mp4boxfile.start();
+                    };
+
+                    mp4boxfile.onSamples = function (id, user, samples) {
+                        if (id !== cammTrackId || !Array.isArray(samples)) return;
+                        for (const s of samples) {
+                            const data = s.data;
+                            if (data && data.byteLength >= 34) {
+                                const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                                const packetType = view.getUint16(0, true);
+                                if (packetType === 5) {
+                                    const lat = view.getFloat64(2, true);
+                                    const lng = view.getFloat64(10, true);
+                                    const ele = view.getFloat64(18, true);
+                                    const speed = view.getFloat32(26, true);
+                                    const heading = view.getFloat32(30, true);
+                                    const dtsTicks = (typeof s.dts === 'number') ? s.dts : accumulatedTicks;
+                                    const timestampOffsetMs = (dtsTicks / cammTimescale) * 1000;
+
+                                    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                                        extracted.push({ lat, lng, ele, speed, heading, timestampOffsetMs });
+                                    }
+                                }
+                            }
+                            accumulatedTicks += (s.duration || 1000);
+                        }
+                    };
+
+                    mp4boxfile.onError = function () {
+                        resolve(extracted);
+                    };
+
+                    const copyBuf = arrayBuffer.slice(0);
+                    copyBuf.fileStart = 0;
+                    mp4boxfile.appendBuffer(copyBuf);
+                    mp4boxfile.flush();
+
+                    setTimeout(() => {
+                        extracted.sort((a, b) => a.timestampOffsetMs - b.timestampOffsetMs);
+                        resolve(extracted);
+                    }, 250);
+                } catch (err) {
+                    console.warn('MP4Box CAMM extraction error:', err);
+                    resolve([]);
+                }
+            });
+        }
+
+        function activateCammPlaybackSession(filename, videoBlob, points) {
+            isCammPlaybackActive = true;
+            cammPlaybackPoints = points || [];
+
+            if (cammVideoObjectUrl) {
+                URL.revokeObjectURL(cammVideoObjectUrl);
+            }
+            cammVideoObjectUrl = URL.createObjectURL(videoBlob);
+
+            const liveVideo = document.getElementById('camera-preview');
+            const playVideo = document.getElementById('camm-playback-video');
+            liveVideo.classList.add('hidden');
+            playVideo.classList.remove('hidden');
+            playVideo.src = cammVideoObjectUrl;
+            playVideo.load();
+
+            const camBox = document.getElementById('camera-window');
+            camBox.classList.remove('hidden');
+            isCameraVisible = true;
+            document.getElementById('cam-playback-badge').classList.remove('hidden');
+
+            document.getElementById('camm-player-panel').classList.remove('hidden');
+            document.getElementById('camm-loaded-title').textContent = filename;
+            document.getElementById('camm-telemetry-badge').textContent = `${cammPlaybackPoints.length} pt`;
+            document.getElementById('slider-camm-seek').value = 0;
+            document.getElementById('camm-time-current').textContent = '00:00.0';
+
+            if (isBottomCollapsed) {
+                toggleBottomPanel();
+            }
+
+            if (cammPlaybackPolyline) {
+                cammPlaybackPolyline.setLatLngs(cammPlaybackPoints.map(p => [p.lat, p.lng]));
+            }
+
+            if (cammPlaybackPoints.length > 0) {
+                const first = cammPlaybackPoints[0];
+                updateCammPlaybackMarker(first.lat, first.lng, first.heading || 0);
+                if (cammPlaybackPoints.length > 1 && map) {
+                    const bounds = cammPlaybackPolyline.getBounds();
+                    if (bounds.isValid()) {
+                        const panel = document.getElementById('bottom-control-panel');
+                        const bottomPad = (panel && !isBottomCollapsed) ? panel.offsetHeight + 24 : 40;
+                        map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad] });
+                    }
+                } else if (map) {
+                    panWithBottomOffset([first.lat, first.lng]);
+                }
+                showToast(
+                    `CAMM動画読込完了: ${filename}`,
+                    `GPS位置データ ${cammPlaybackPoints.length} ポイントを地図に表示しました。再生バーで位置を移動できます。`
+                );
+            } else {
+                if (cammPlaybackMarker && map) {
+                    map.removeLayer(cammPlaybackMarker);
+                    cammPlaybackMarker = null;
+                }
+                document.getElementById('camm-coord-readout').textContent = 'GPSメタデータなし';
+                showToast(
+                    `動画読込完了: ${filename}`,
+                    'この動画にはCAMM GPSメタデータが含まれていませんが、再生バーで映像を操作できます。',
+                    'warning'
+                );
+            }
+        }
+
+        function updateCammPlaybackMarker(lat, lng, headingDeg = 0) {
+            if (!map) return;
+            const iconHtml = `
+                <div class="relative flex items-center justify-center w-8 h-8">
+                    <span class="absolute w-7 h-7 rounded-full bg-cyan-400/35 animate-ping"></span>
+                    <div class="w-6 h-6 rounded-full bg-cyan-500 border-2 border-white shadow-lg flex items-center justify-center text-slate-950 text-[11px] font-black" style="transform: rotate(${headingDeg}deg);">
+                        ▲
+                    </div>
+                </div>
+            `;
+            const icon = L.divIcon({
+                html: iconHtml,
+                className: '',
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+
+            if (!cammPlaybackMarker) {
+                cammPlaybackMarker = L.marker([lat, lng], { icon: icon, zIndexOffset: 500 }).addTo(map);
+            } else {
+                cammPlaybackMarker.setLatLng([lat, lng]);
+                cammPlaybackMarker.setIcon(icon);
+            }
+        }
+
+        function syncCammMapToTime(currentSeconds) {
+            document.getElementById('camm-time-current').textContent = formatMMSSDecimal(currentSeconds);
+
+            if (!cammPlaybackPoints || cammPlaybackPoints.length === 0) return;
+
+            const targetMs = currentSeconds * 1000;
+            let interp = cammPlaybackPoints[0];
+
+            if (cammPlaybackPoints.length === 1 || targetMs <= cammPlaybackPoints[0].timestampOffsetMs) {
+                interp = cammPlaybackPoints[0];
+            } else if (targetMs >= cammPlaybackPoints[cammPlaybackPoints.length - 1].timestampOffsetMs) {
+                interp = cammPlaybackPoints[cammPlaybackPoints.length - 1];
+            } else {
+                for (let i = 0; i < cammPlaybackPoints.length - 1; i++) {
+                    const p0 = cammPlaybackPoints[i];
+                    const p1 = cammPlaybackPoints[i + 1];
+                    if (targetMs >= p0.timestampOffsetMs && targetMs <= p1.timestampOffsetMs) {
+                        const span = Math.max(1, p1.timestampOffsetMs - p0.timestampOffsetMs);
+                        const ratio = (targetMs - p0.timestampOffsetMs) / span;
+                        interp = {
+                            lat: p0.lat + (p1.lat - p0.lat) * ratio,
+                            lng: p0.lng + (p1.lng - p0.lng) * ratio,
+                            ele: (p0.ele || 0) + ((p1.ele || 0) - (p0.ele || 0)) * ratio,
+                            speed: (p0.speed || 0) + ((p1.speed || 0) - (p0.speed || 0)) * ratio,
+                            heading: p0.heading || 0
+                        };
+                        break;
+                    }
+                }
+            }
+
+            updateCammPlaybackMarker(interp.lat, interp.lng, interp.heading || 0);
+            document.getElementById('camm-coord-readout').textContent = `${interp.lat.toFixed(5)}, ${interp.lng.toFixed(5)}`;
+
+            const speedKmh = ((interp.speed || 0) * 3.6).toFixed(1);
+            document.getElementById('hud-speed').innerHTML = `${speedKmh} <span class="text-[10px] font-normal">km/h</span>`;
+            document.getElementById('cam-gps-badge').textContent = `CAMM: ${interp.lat.toFixed(5)}, ${interp.lng.toFixed(5)}`;
+
+            if (trackingMode === 0 && map) {
+                panWithBottomOffset([interp.lat, interp.lng]);
+            }
+        }
+
+        function toggleCammPlayPause() {
+            const playVideo = document.getElementById('camm-playback-video');
+            if (!playVideo) return;
+            if (playVideo.paused) {
+                playVideo.play().catch(err => console.warn('Video play blocked:', err));
+            } else {
+                playVideo.pause();
+            }
+        }
+
+        function closeCammPlayer() {
+            isCammPlaybackActive = false;
+            cammPlaybackPoints = [];
+
+            const playVideo = document.getElementById('camm-playback-video');
+            const liveVideo = document.getElementById('camera-preview');
+            if (playVideo) {
+                playVideo.pause();
+                playVideo.removeAttribute('src');
+                playVideo.load();
+                playVideo.classList.add('hidden');
+            }
+            if (liveVideo) {
+                liveVideo.classList.remove('hidden');
+            }
+
+            if (cammVideoObjectUrl) {
+                URL.revokeObjectURL(cammVideoObjectUrl);
+                cammVideoObjectUrl = null;
+            }
+
+            document.getElementById('cam-playback-badge').classList.add('hidden');
+            document.getElementById('camm-player-panel').classList.add('hidden');
+
+            if (cammPlaybackPolyline) {
+                cammPlaybackPolyline.setLatLngs([]);
+            }
+            if (cammPlaybackMarker && map) {
+                map.removeLayer(cammPlaybackMarker);
+                cammPlaybackMarker = null;
+            }
+        }
+
+        function formatMMSSDecimal(totalSeconds) {
+            if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return '00:00.0';
+            const mins = Math.floor(totalSeconds / 60);
+            const secs = (totalSeconds % 60).toFixed(1);
+            return `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
         }
 
         function bindStyleEvents() {
