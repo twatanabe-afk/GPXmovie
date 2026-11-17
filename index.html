@@ -284,97 +284,105 @@
         </button>
 
         <!-- Collapsible Body -->
-        <div id="bottom-panel-body" class="p-3.5 sm:p-4 max-w-xl mx-auto space-y-3">
-            <!-- CAMM VIDEO PLAYBACK SCRUBBER PANEL (Shown when a CAMM video/ZIP is loaded) -->
-            <div id="camm-player-panel" class="hidden bg-slate-900/95 border border-cyan-500/50 rounded-2xl p-3 space-y-2.5 shadow-inner">
+        <div id="bottom-panel-body" class="p-2.5 sm:p-3.5 max-w-xl mx-auto space-y-2">
+            <!-- SLIM CAMM VIDEO PLAYBACK SCRUBBER PANEL (Shown when a CAMM video/ZIP is loaded) -->
+            <div id="camm-player-panel" class="hidden bg-slate-900/95 border border-cyan-500/50 rounded-xl px-2.5 py-2 space-y-1.5 shadow-inner">
                 <div class="flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 min-w-0">
-                        <span class="text-xs">🎬</span>
-                        <span id="camm-loaded-title" class="text-xs font-extrabold text-cyan-300 truncate">CAMM動画プレイヤー</span>
-                    </div>
-                    <div class="flex items-center gap-1.5 shrink-0">
-                        <span id="camm-telemetry-badge" class="text-[10px] font-mono bg-slate-800 text-emerald-300 px-2 py-0.5 rounded-md">
+                        <span class="text-[11px]">🎬</span>
+                        <span id="camm-loaded-title" class="text-[11px] font-extrabold text-cyan-300 truncate">CAMM動画プレイヤー</span>
+                        <span id="camm-telemetry-badge" class="text-[9px] font-mono bg-slate-800 text-emerald-300 px-1.5 py-0.5 rounded shrink-0">
                             0 pt
                         </span>
-                        <button id="btn-close-camm-player" type="button" title="プレイヤーを閉じてカメラに戻る" class="px-2 py-0.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-white rounded-md text-[10px] font-bold transition">
-                            ✕ 終了
-                        </button>
                     </div>
+                    <button id="btn-close-camm-player" type="button" title="プレイヤーを閉じる" class="px-2 py-0.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-white rounded text-[10px] font-bold transition shrink-0">
+                        ✕
+                    </button>
                 </div>
 
-                <!-- Playback Controls & Interactive Timeline Scrubber -->
-                <div class="flex items-center gap-2.5">
-                    <button id="btn-camm-play-pause" type="button" class="w-10 h-10 shrink-0 rounded-xl bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white flex items-center justify-center shadow transition">
+                <!-- Single-row Compact Playback Controls & Scrubber -->
+                <div class="flex items-center gap-2">
+                    <button id="btn-camm-play-pause" type="button" class="w-8 h-8 shrink-0 rounded-lg bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white text-xs flex items-center justify-center shadow transition">
                         <i id="icon-camm-play-pause" class="fa-solid fa-play"></i>
                     </button>
 
-                    <div class="flex-1 space-y-1">
-                        <input type="range" id="slider-camm-seek" min="0" max="100" step="0.05" value="0" class="w-full accent-cyan-400 cursor-pointer h-2 bg-slate-700 rounded-lg" />
-                        <div class="flex items-center justify-between text-[10px] font-mono text-slate-300">
-                            <span id="camm-time-current">00:00.0</span>
-                            <span id="camm-coord-readout" class="text-cyan-300 truncate max-w-[160px]">---, ---</span>
-                            <span id="camm-time-total">00:00.0</span>
-                        </div>
-                    </div>
+                    <span id="camm-time-current" class="text-[10px] font-mono text-slate-300 shrink-0">00:00.0</span>
+
+                    <input type="range" id="slider-camm-seek" min="0" max="100" step="0.05" value="0" class="flex-1 accent-cyan-400 cursor-pointer h-1.5 bg-slate-700 rounded-lg min-w-0" />
+
+                    <span id="camm-time-total" class="text-[10px] font-mono text-slate-400 shrink-0">00:00.0</span>
+                </div>
+                <div class="flex justify-end">
+                    <span id="camm-coord-readout" class="text-[9px] font-mono text-cyan-300/90 truncate">---, ---</span>
                 </div>
             </div>
 
-            <!-- PROMINENT CAMM MP4 EXPORT PANEL (Shown when recorded data exists) -->
-            <div id="export-action-panel" class="hidden bg-slate-900/90 border border-cyan-500/40 rounded-2xl p-3 space-y-2.5 shadow-inner">
-                <div class="flex items-center justify-between text-[11px]">
-                    <span class="font-bold text-cyan-300 flex items-center gap-1.5">
-                        <i class="fa-solid fa-folder-open"></i> 保存先を指定して出力
-                    </span>
-                    <span id="export-summary-badge" class="font-mono text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md">
-                        0 pt / 0.0 MB
-                    </span>
-                </div>
-
-                <!-- Primary: Unmistakable CAMM MP4 Export Button with Save Destination Picker -->
-                <button id="btn-export-camm-mp4" type="button" class="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:scale-[0.99] text-white font-extrabold text-sm rounded-xl shadow-lg shadow-cyan-950/60 transition flex items-center justify-center gap-2">
-                    <span>📹 CAMM MP4動画を保存 (保存先指定)</span>
-                    <span id="camm-btn-size" class="text-xs font-mono font-normal bg-black/25 px-2 py-0.5 rounded-full">0.0 MB</span>
-                </button>
-
-                <!-- Secondary & Tertiary Export Buttons -->
-                <div class="grid grid-cols-2 gap-2">
-                    <button id="btn-export-zip" type="button" class="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 active:scale-95 text-amber-300 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5">
-                        <span>📦 ZIP一括保存 (MP4+GPX+CAMM)</span>
-                    </button>
-                    <button id="btn-export-gpx" type="button" class="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 active:scale-95 text-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5">
-                        <span>📄 GPXのみ保存</span>
-                    </button>
-                </div>
-
-                <!-- Mobile Share Sheet Option for iOS Safari Folder Selection -->
-                <div class="flex items-center justify-between pt-1 border-t border-slate-800 text-[11px] text-slate-300">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" id="chk-use-share-sheet" class="rounded accent-cyan-500 w-3.5 h-3.5">
-                        <span>スマホ共有メニュー（「ファイルに保存」でフォルダ指定）を使う</span>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Tracking Mode Toggle (3-Stage Text Only) & Main Record Button -->
-            <div class="flex items-center gap-2">
-                <button id="btn-track-mode" type="button" class="w-1/3 py-3.5 px-2 bg-slate-800/95 hover:bg-slate-700 border border-slate-600/80 rounded-xl text-xs font-bold text-cyan-400 active:scale-95 transition text-center truncate">
+            <!-- Compact Bottom Action Row (Never blocks map view) -->
+            <div class="flex items-center gap-1.5">
+                <button id="btn-track-mode" type="button" class="py-3 px-2 bg-slate-800/95 hover:bg-slate-700 border border-slate-600/80 rounded-xl text-[11px] font-bold text-cyan-400 active:scale-95 transition text-center truncate shrink-0">
                     追尾: 現在地
                 </button>
 
-                <button id="btn-load-camm-inline" type="button" class="py-3.5 px-3 bg-slate-800/95 hover:bg-slate-700 border border-cyan-500/50 rounded-xl text-xs font-bold text-cyan-300 active:scale-95 transition flex items-center justify-center gap-1 shrink-0">
-                    <span>📂 CAMM読込</span>
+                <button id="btn-load-camm-inline" type="button" class="py-3 px-2.5 bg-slate-800/95 hover:bg-slate-700 border border-cyan-500/50 rounded-xl text-[11px] font-bold text-cyan-300 active:scale-95 transition flex items-center justify-center gap-1 shrink-0">
+                    <span>📂 読込</span>
                 </button>
 
-                <button id="btn-record-toggle" type="button" class="flex-1 py-3.5 px-3 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs sm:text-sm shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-2">
-                    <span id="record-btn-dot" class="w-3 h-3 rounded-full bg-white inline-block"></span>
-                    <span id="record-btn-label">記録開始</span>
+                <button id="btn-open-export-modal" type="button" class="hidden py-3 px-2.5 bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-400/70 rounded-xl text-[11px] font-extrabold text-cyan-300 active:scale-95 transition flex items-center justify-center gap-1 shrink-0 shadow">
+                    <span>💾 出力</span>
+                </button>
+
+                <button id="btn-record-toggle" type="button" class="flex-1 py-3 px-2.5 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-1.5 min-w-0">
+                    <span id="record-btn-dot" class="w-2.5 h-2.5 rounded-full bg-white inline-block shrink-0"></span>
+                    <span id="record-btn-label" class="truncate">記録開始</span>
                 </button>
             </div>
 
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.17.1630</span>
+                <span class="font-mono text-slate-400">v2026.11.17.1703</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Export & Save Options (Keeps map unobstructed) -->
+    <div id="modal-export-options" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-sm rounded-3xl p-5 space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="text-base font-extrabold text-white flex items-center gap-2">💾 記録データの保存・出力</h3>
+                <button id="close-export-modal" type="button" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between text-xs bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-700/80">
+                <span class="font-bold text-cyan-300">記録サマリー</span>
+                <span id="export-summary-badge" class="font-mono text-slate-200">0 pt / 0.0 MB</span>
+            </div>
+
+            <div class="space-y-2.5">
+                <!-- Primary: CAMM MP4 Export Button -->
+                <button id="btn-export-camm-mp4" type="button" class="w-full py-3.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:scale-[0.99] text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-lg shadow-cyan-950/60 transition flex items-center justify-center gap-2">
+                    <span>📹 CAMM MP4動画を保存</span>
+                    <span id="camm-btn-size" class="text-[11px] font-mono font-normal bg-black/25 px-2 py-0.5 rounded-full">0.0 MB</span>
+                </button>
+
+                <!-- Secondary & Tertiary Export Buttons -->
+                <button id="btn-export-zip" type="button" class="w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-600 active:scale-95 text-amber-300 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5">
+                    <span>📦 ZIP一括保存 (MP4 + GPX + CAMM)</span>
+                </button>
+
+                <button id="btn-export-gpx" type="button" class="w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-600 active:scale-95 text-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5">
+                    <span>📄 GPX軌跡のみ保存</span>
+                </button>
+            </div>
+
+            <!-- Mobile Share Sheet Option -->
+            <div class="pt-2 border-t border-slate-800 text-[11px] text-slate-300">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="chk-use-share-sheet" class="rounded accent-cyan-500 w-4 h-4 shrink-0">
+                    <span>スマホ共有メニュー（「ファイルに保存」でフォルダ指定）を使う</span>
+                </label>
             </div>
         </div>
     </div>
@@ -441,7 +449,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.17.1630';
+        const APP_VERSION = 'v2026.11.17.1703';
 
         // Map & Geolocation State
         let map = null;
@@ -1003,15 +1011,16 @@
                 userPolyline.setLatLngs([]);
             }
 
-            document.getElementById('export-action-panel').classList.add('hidden');
+            document.getElementById('btn-open-export-modal').classList.add('hidden');
+            document.getElementById('modal-export-options').classList.add('hidden');
             document.getElementById('hud-elapsed').textContent = '00:00';
             document.getElementById('hud-distance').innerHTML = `0.00 <span class="text-[10px] font-normal">km</span>`;
             document.getElementById('hud-video-size').innerHTML = `0.0 <span class="text-[10px] font-normal">MB</span>`;
             updateFooterTelemetryText();
 
             const recBtn = document.getElementById('btn-record-toggle');
-            recBtn.className = 'flex-1 py-3.5 px-4 bg-slate-700 hover:bg-slate-600 active:scale-[0.98] text-white rounded-xl font-extrabold text-sm shadow-lg transition flex items-center justify-center gap-2 border border-rose-500/60';
-            document.getElementById('record-btn-dot').className = 'w-3 h-3 rounded-sm bg-rose-500 inline-block animate-pulse';
+            recBtn.className = 'flex-1 py-3 px-3 bg-slate-700 hover:bg-slate-600 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs shadow-lg transition flex items-center justify-center gap-1.5 border border-rose-500/60 min-w-0';
+            document.getElementById('record-btn-dot').className = 'w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block animate-pulse shrink-0';
             document.getElementById('record-btn-label').textContent = '記録停止';
 
             if (currentPosition) {
@@ -1042,13 +1051,13 @@
 
             const recBtn = document.getElementById('btn-record-toggle');
             recBtn.disabled = true;
-            document.getElementById('record-btn-label').textContent = '動画データ確定中...';
+            document.getElementById('record-btn-label').textContent = '動画確定中...';
 
             await stopMediaRecordingAndFlush();
 
             recBtn.disabled = false;
-            recBtn.className = 'flex-1 py-3.5 px-3 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs sm:text-sm shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-2';
-            document.getElementById('record-btn-dot').className = 'w-3 h-3 rounded-full bg-white inline-block';
+            recBtn.className = 'flex-1 py-3 px-2.5 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-1.5 min-w-0';
+            document.getElementById('record-btn-dot').className = 'w-2.5 h-2.5 rounded-full bg-white inline-block shrink-0';
             document.getElementById('record-btn-label').textContent = '記録開始';
 
             releaseScreenWakeLock();
@@ -1194,16 +1203,12 @@
                 return;
             }
 
-            const panel = document.getElementById('export-action-panel');
-            panel.classList.remove('hidden');
-
-            if (isBottomCollapsed) {
-                toggleBottomPanel();
-            }
-
             const sizeMB = hasVideo ? (recordedVideoBlob.size / (1024 * 1024)).toFixed(2) : '0.00';
             document.getElementById('export-summary-badge').textContent = `${recordedPoints.length} pt / ${sizeMB} MB`;
             document.getElementById('camm-btn-size').textContent = hasVideo ? `${sizeMB} MB` : 'GPSのみ';
+
+            document.getElementById('btn-open-export-modal').classList.remove('hidden');
+            document.getElementById('modal-export-options').classList.remove('hidden');
         }
 
         // 7. User-Selectable Save Destination Helper
@@ -1480,6 +1485,13 @@ ${trkpts}
             });
 
             document.getElementById('btn-record-toggle').addEventListener('click', toggleRecording);
+
+            document.getElementById('btn-open-export-modal').addEventListener('click', () => {
+                document.getElementById('modal-export-options').classList.remove('hidden');
+            });
+            document.getElementById('close-export-modal').addEventListener('click', () => {
+                document.getElementById('modal-export-options').classList.add('hidden');
+            });
 
             document.getElementById('btn-export-camm-mp4').addEventListener('click', handleExportCammMp4);
             document.getElementById('btn-export-zip').addEventListener('click', handleExportZipBundle);
