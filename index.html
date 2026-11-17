@@ -265,8 +265,8 @@
         <button id="btn-track-style" type="button" aria-label="スタイル設定" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition">
             🎨
         </button>
-        <button id="btn-toggle-cam-overlay" type="button" aria-label="カメラ表示切替" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition">
-            👁️
+        <button id="btn-toggle-cam-overlay" type="button" aria-label="カメラ表示切替" title="カメラウィンドウ表示/非表示" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-cyan-300 text-base shadow-lg transition">
+            <i id="icon-toggle-cam-overlay" class="fa-solid fa-video"></i>
         </button>
         <button id="btn-open-camm-file" type="button" aria-label="CAMM動画読込" title="CAMM動画/ZIP読み込み" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition border border-cyan-500/40">
             📂
@@ -1455,11 +1455,14 @@ ${trkpts}
 
             document.getElementById('btn-toggle-cam-overlay').addEventListener('click', () => {
                 const camBox = document.getElementById('camera-window');
+                const iconEl = document.getElementById('icon-toggle-cam-overlay');
                 isCameraVisible = !isCameraVisible;
                 if (isCameraVisible) {
                     camBox.classList.remove('hidden');
+                    if (iconEl) iconEl.className = 'fa-solid fa-video';
                 } else {
                     camBox.classList.add('hidden');
+                    if (iconEl) iconEl.className = 'fa-solid fa-video-slash text-slate-400';
                 }
             });
 
