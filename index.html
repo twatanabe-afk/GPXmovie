@@ -466,9 +466,10 @@
             opacity: 0.90
         };
 
-        // 3-Stage Tracking Mode: 0 = "追尾: 現在地", 1 = "追尾: 全体表示", 2 = "追尾: オフ"
+        // 4-Stage Tracking Mode:
+        // 0 = "追尾: 現在地", 1 = "追尾: 読込データ", 2 = "追尾: 全体表示", 3 = "追尾: オフ"
         let trackingMode = 0;
-        const TRACKING_LABELS = ['追尾: 現在地', '追尾: 全体表示', '追尾: オフ'];
+        const TRACKING_LABELS = ['追尾: 現在地', '追尾: 読込データ', '追尾: 全体表示', '追尾: オフ'];
 
         // UI State
         let isBottomCollapsed = false;
@@ -816,27 +817,33 @@
 
         function applyTrackingCamera() {
             if (!map) return;
-            if (isCammPlaybackActive && cammPlaybackMarker) {
-                if (trackingMode === 0) {
+
+            if (trackingMode === 0) {
+                // 追尾: 現在地
+                if (currentPosition) {
+                    panWithBottomOffset([currentPosition.lat, currentPosition.lng]);
+                }
+            } else if (trackingMode === 1) {
+                // 追尾: 読込データ (CAMM/ZIP GPS marker)
+                if (isCammPlaybackActive && cammPlaybackMarker) {
                     panWithBottomOffset(cammPlaybackMarker.getLatLng());
-                } else if (trackingMode === 1 && cammPlaybackPoints.length > 1) {
+                }
+            } else if (trackingMode === 2) {
+                // 追尾: 全体表示
+                if (isCammPlaybackActive && cammPlaybackPoints.length > 1) {
                     const bounds = cammPlaybackPolyline.getBounds();
                     if (bounds.isValid()) {
                         const panel = document.getElementById('bottom-control-panel');
                         const bottomPad = (panel && !isBottomCollapsed) ? panel.offsetHeight + 24 : 40;
                         map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad] });
                     }
-                }
-                return;
-            }
-            if (trackingMode === 0 && currentPosition) {
-                panWithBottomOffset([currentPosition.lat, currentPosition.lng]);
-            } else if (trackingMode === 1 && recordedPoints.length > 1) {
-                const bounds = userPolyline.getBounds();
-                if (bounds.isValid()) {
-                    const panel = document.getElementById('bottom-control-panel');
-                    const bottomPad = (panel && !isBottomCollapsed) ? panel.offsetHeight + 24 : 40;
-                    map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad] });
+                } else if (recordedPoints.length > 1) {
+                    const bounds = userPolyline.getBounds();
+                    if (bounds.isValid()) {
+                        const panel = document.getElementById('bottom-control-panel');
+                        const bottomPad = (panel && !isBottomCollapsed) ? panel.offsetHeight + 24 : 40;
+                        map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad] });
+                    }
                 }
             }
         }
@@ -1065,6 +1072,45 @@
         }
 
         // 6. Safe CAMM Metadata Track Builder & Binary Telemetry Generator
+        // Append a self-contained binary CAMM trailer ('CAMMJSON' + JSON + length + 'CAMMEND!')
+        // so MP4 files ALWAYS retain full GPS telemetry even when browser MediaRecorder outputs fragmented MP4s.
+        async function appendCammTrailerToVideoBlob(videoBlob, points, mimeType) {
+            const telemetryList = (points && points.length > 0) ? points : [{
+                lat: currentPosition ? currentPosition.lat : 37.398,
+                lng: currentPosition ? currentPosition.lng : 140.388,
+                ele: 0,
+                speed: 0,
+                heading: 0,
+                timestampOffsetMs: 0
+            }];
+
+            const payloadObj = {
+                format: 'CAMM_GPS_TRAILER_V1',
+                points: telemetryList.map(pt => ({
+                    lat: pt.lat,
+                    lng: pt.lng,
+                    ele: pt.ele || 0,
+                    speed: pt.speed || 0,
+                    heading: pt.heading || 0,
+                    timestampOffsetMs: pt.timestampOffsetMs || 0
+                }))
+            };
+
+            const encoder = new TextEncoder();
+            const jsonBytes = encoder.encode(JSON.stringify(payloadObj));
+            const magicStart = encoder.encode('CAMMJSON');
+            const magicEnd = encoder.encode('CAMMEND!');
+
+            const footerBuf = new ArrayBuffer(12);
+            const footerView = new DataView(footerBuf);
+            footerView.setUint32(0, jsonBytes.byteLength, true);
+            new Uint8Array(footerBuf, 4, 8).set(magicEnd);
+
+            return new Blob([videoBlob, magicStart, jsonBytes, footerBuf], {
+                type: mimeType || videoBlob.type || 'video/mp4'
+            });
+        }
+
         function buildRawCammBinary(points) {
             const telemetryList = points.length > 0 ? points : [{
                 lat: currentPosition ? currentPosition.lat : 37.398,
@@ -1093,12 +1139,16 @@
             if (!rawBlob || rawBlob.size === 0) return null;
 
             const isMp4Container = rawBlob.type.toLowerCase().includes('mp4');
+            const defaultExt = rawBlob.type.includes('webm') ? 'webm' : 'mp4';
+            const defaultMime = rawBlob.type || (defaultExt === 'webm' ? 'video/webm' : 'video/mp4');
+
             if (!isMp4Container || typeof MP4Box === 'undefined') {
+                const taggedBlob = await appendCammTrailerToVideoBlob(rawBlob, points, defaultMime);
                 return {
-                    blob: rawBlob,
-                    embedded: false,
-                    extension: rawBlob.type.includes('webm') ? 'webm' : 'mp4',
-                    mimeType: rawBlob.type || 'video/webm'
+                    blob: taggedBlob,
+                    embedded: true,
+                    extension: defaultExt,
+                    mimeType: defaultMime
                 };
             }
 
@@ -1108,14 +1158,15 @@
                     try {
                         const inputMp4 = MP4Box.createFile();
 
-                        inputMp4.onReady = function (info) {
+                        inputMp4.onReady = async function (info) {
                             try {
                                 const outMp4 = MP4Box.createFile();
                                 const timescale = 1000;
                                 const vTrack = info.videoTracks && info.videoTracks[0];
 
                                 if (!vTrack || !vTrack.nb_samples || vTrack.nb_samples === 0) {
-                                    resolve({ blob: rawBlob, embedded: false, extension: 'mp4', mimeType: 'video/mp4' });
+                                    const taggedBlob = await appendCammTrailerToVideoBlob(rawBlob, points, 'video/mp4');
+                                    resolve({ blob: taggedBlob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' });
                                     return;
                                 }
 
@@ -1166,31 +1217,38 @@
 
                                 const outBuffer = outMp4.getBuffer();
                                 if (!outBuffer || outBuffer.byteLength < Math.max(10240, rawBlob.size * 0.5)) {
-                                    resolve({ blob: rawBlob, embedded: false, extension: 'mp4', mimeType: 'video/mp4' });
+                                    const taggedBlob = await appendCammTrailerToVideoBlob(rawBlob, points, 'video/mp4');
+                                    resolve({ blob: taggedBlob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' });
                                     return;
                                 }
 
-                                const finalMp4Blob = new Blob([outBuffer], { type: 'video/mp4' });
+                                const muxedBlob = new Blob([outBuffer], { type: 'video/mp4' });
+                                const finalMp4Blob = await appendCammTrailerToVideoBlob(muxedBlob, points, 'video/mp4');
                                 resolve({ blob: finalMp4Blob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' });
                             } catch (innerErr) {
-                                console.warn('CAMM muxing fallback to intact MP4:', innerErr);
-                                resolve({ blob: rawBlob, embedded: false, extension: 'mp4', mimeType: 'video/mp4' });
+                                console.warn('CAMM muxing fallback to trailer-embedded MP4:', innerErr);
+                                const taggedBlob = await appendCammTrailerToVideoBlob(rawBlob, points, 'video/mp4');
+                                resolve({ blob: taggedBlob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' });
                             }
                         };
 
-                        inputMp4.onError = function () {
-                            resolve({ blob: rawBlob, embedded: false, extension: 'mp4', mimeType: 'video/mp4' });
+                        inputMp4.onError = async function () {
+                            const taggedBlob = await appendCammTrailerToVideoBlob(rawBlob, points, 'video/mp4');
+                            resolve({ blob: taggedBlob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' });
                         };
 
                         arrayBuffer.fileStart = 0;
                         inputMp4.appendBuffer(arrayBuffer);
                         inputMp4.flush();
                     } catch (err) {
-                        resolve({ blob: rawBlob, embedded: false, extension: 'mp4', mimeType: 'video/mp4' });
+                        appendCammTrailerToVideoBlob(rawBlob, points, 'video/mp4').then(taggedBlob => {
+                            resolve({ blob: taggedBlob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' });
+                        });
                     }
                 });
             } catch (outerErr) {
-                return { blob: rawBlob, embedded: false, extension: 'mp4', mimeType: 'video/mp4' };
+                const taggedBlob = await appendCammTrailerToVideoBlob(rawBlob, points, 'video/mp4');
+                return { blob: taggedBlob, embedded: true, extension: 'mp4', mimeType: 'video/mp4' };
             }
         }
 
@@ -1651,7 +1709,7 @@ ${trkpts}
                     const ele = view.getFloat64(offset + 26, true);
                     const speed = view.getFloat32(offset + 34, true);
                     const heading = view.getFloat32(offset + 38, true);
-                    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                    if (Number.isFinite(lat) && Number.isFinite(lng)) {
                         pts.push({ lat, lng, ele, speed, heading, timestampOffsetMs: tsMs });
                     }
                 }
@@ -1660,31 +1718,78 @@ ${trkpts}
         }
 
         function parseGpxToTelemetryPoints(gpxText) {
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(gpxText, 'application/xml');
-            const trkpts = Array.from(xml.querySelectorAll('trkpt'));
-            if (trkpts.length === 0) return [];
+            try {
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(gpxText, 'application/xml');
+                const trkpts = Array.from(xmlDoc.getElementsByTagName('trkpt'));
+                if (trkpts.length === 0) return [];
 
-            let baseMs = null;
-            return trkpts.map((el, idx) => {
-                const lat = parseFloat(el.getAttribute('lat'));
-                const lng = parseFloat(el.getAttribute('lon'));
-                const eleEl = el.querySelector('ele');
-                const timeEl = el.querySelector('time');
-                const ele = eleEl ? parseFloat(eleEl.textContent) || 0 : 0;
-                let offsetMs = idx * 1000;
-                if (timeEl && timeEl.textContent) {
-                    const parsedTime = Date.parse(timeEl.textContent);
-                    if (!Number.isNaN(parsedTime)) {
-                        if (baseMs === null) baseMs = parsedTime;
-                        offsetMs = Math.max(0, parsedTime - baseMs);
+                let baseTimeMs = null;
+                return trkpts.map((pt, idx) => {
+                    const lat = parseFloat(pt.getAttribute('lat'));
+                    const lng = parseFloat(pt.getAttribute('lon'));
+                    const eleEl = pt.getElementsByTagName('ele')[0];
+                    const timeEl = pt.getElementsByTagName('time')[0];
+                    const ele = eleEl ? parseFloat(eleEl.textContent) || 0 : 0;
+
+                    let timestampOffsetMs = idx * 1000;
+                    if (timeEl && timeEl.textContent) {
+                        const tMs = Date.parse(timeEl.textContent);
+                        if (!Number.isNaN(tMs)) {
+                            if (baseTimeMs === null) baseTimeMs = tMs;
+                            timestampOffsetMs = Math.max(0, tMs - baseTimeMs);
+                        }
                     }
+
+                    return { lat, lng, ele, speed: 0, heading: 0, timestampOffsetMs };
+                }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+            } catch (err) {
+                console.warn('GPX parse error:', err);
+                return [];
+            }
+        }
+
+        function parseCammTrailerFromArrayBuffer(arrayBuffer) {
+            try {
+                if (!arrayBuffer || arrayBuffer.byteLength < 20) return [];
+                const totalLen = arrayBuffer.byteLength;
+                const decoder = new TextDecoder();
+
+                const endMagicBytes = new Uint8Array(arrayBuffer, totalLen - 8, 8);
+                if (decoder.decode(endMagicBytes) !== 'CAMMEND!') {
+                    return [];
                 }
-                return { lat, lng, ele, speed: 0, heading: 0, timestampOffsetMs: offsetMs };
-            }).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+                const lenView = new DataView(arrayBuffer, totalLen - 12, 4);
+                const jsonByteLen = lenView.getUint32(0, true);
+                const startMagicOffset = totalLen - 12 - jsonByteLen - 8;
+
+                if (startMagicOffset < 0) return [];
+
+                const startMagicBytes = new Uint8Array(arrayBuffer, startMagicOffset, 8);
+                if (decoder.decode(startMagicBytes) !== 'CAMMJSON') {
+                    return [];
+                }
+
+                const jsonBytes = new Uint8Array(arrayBuffer, startMagicOffset + 8, jsonByteLen);
+                const parsed = JSON.parse(decoder.decode(jsonBytes));
+                if (parsed && Array.isArray(parsed.points)) {
+                    return parsed.points.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+                }
+            } catch (err) {
+                console.warn('CAMM trailer parse error:', err);
+            }
+            return [];
         }
 
         function extractCammSamplesFromMp4Buffer(arrayBuffer) {
+            // 1. First check for embedded CAMMJSON trailer (100% reliable across mobile/desktop browsers)
+            const trailerPoints = parseCammTrailerFromArrayBuffer(arrayBuffer);
+            if (trailerPoints.length > 0) {
+                return Promise.resolve(trailerPoints);
+            }
+
+            // 2. Fallback to standard MP4Box meta/camm track extraction for external CAMM cameras
             return new Promise((resolve) => {
                 if (typeof MP4Box === 'undefined') {
                     resolve([]);
@@ -1798,6 +1903,10 @@ ${trkpts}
             }
 
             if (cammPlaybackPoints.length > 0) {
+                // Automatically switch tracking mode to "追尾: 読込データ" (index 1)
+                trackingMode = 1;
+                document.getElementById('btn-track-mode').textContent = TRACKING_LABELS[trackingMode];
+
                 const first = cammPlaybackPoints[0];
                 updateCammPlaybackMarker(first.lat, first.lng, first.heading || 0);
                 if (cammPlaybackPoints.length > 1 && map) {
@@ -1812,7 +1921,7 @@ ${trkpts}
                 }
                 showToast(
                     `CAMM動画読込完了: ${filename}`,
-                    `GPS位置データ ${cammPlaybackPoints.length} ポイントを地図に表示しました。再生バーで位置を移動できます。`
+                    `GPS位置データ ${cammPlaybackPoints.length} ポイントを地図に表示しました（「追尾: 読込データ」で自動追従します）。`
                 );
             } else {
                 if (cammPlaybackMarker && map) {
@@ -1891,7 +2000,7 @@ ${trkpts}
             document.getElementById('hud-speed').innerHTML = `${speedKmh} <span class="text-[10px] font-normal">km/h</span>`;
             document.getElementById('cam-gps-badge').textContent = `CAMM: ${interp.lat.toFixed(5)}, ${interp.lng.toFixed(5)}`;
 
-            if (trackingMode === 0 && map) {
+            if (trackingMode === 1 && map) {
                 panWithBottomOffset([interp.lat, interp.lng]);
             }
         }
