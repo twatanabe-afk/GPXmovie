@@ -70,10 +70,10 @@
         /* Floating Camera Window (PiP Default) */
         .camera-window-container {
             position: fixed;
-            top: 92px;
+            top: 146px;
             left: 12px;
-            width: 180px;
-            height: 240px;
+            width: 172px;
+            height: 224px;
             z-index: 25;
             border-radius: 1rem;
             overflow: hidden;
@@ -177,25 +177,14 @@
 
         <!-- CAMERA VIEWFINDER WINDOW (Draggable PiP / Split / Fullscreen) -->
         <div id="camera-window" class="camera-window-container flex flex-col">
-            <!-- Drag Handle & Layout Switcher Header -->
+            <!-- Drag Handle & Camera Flip Header -->
             <div id="cam-drag-header" class="flex items-center justify-between px-2.5 py-1.5 bg-slate-950/90 border-b border-slate-800 cursor-move select-none z-10">
                 <span class="text-[10px] font-extrabold text-cyan-400 flex items-center gap-1">
                     <i class="fa-solid fa-video"></i> CAM
                 </span>
-                <div class="flex items-center gap-1">
-                    <button id="btn-switch-camera" type="button" title="カメラ切替" class="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] flex items-center justify-center">
-                        <i class="fa-solid fa-camera-rotate"></i>
-                    </button>
-                    <button id="btn-layout-map" type="button" title="地図メイン(PiP)" class="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] flex items-center justify-center">
-                        🗺️
-                    </button>
-                    <button id="btn-layout-split" type="button" title="上下/左右分割" class="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] flex items-center justify-center">
-                        🌗
-                    </button>
-                    <button id="btn-layout-cam" type="button" title="カメラ全画面" class="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] flex items-center justify-center">
-                        📷
-                    </button>
-                </div>
+                <button id="btn-switch-camera" type="button" title="イン/アウトカメラ切替" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs flex items-center justify-center">
+                    <i class="fa-solid fa-camera-rotate"></i>
+                </button>
             </div>
 
             <!-- Video Stream Element -->
@@ -245,10 +234,17 @@
                 <div id="hud-speed" class="text-sm sm:text-base font-bold font-mono text-emerald-400">0.0 <span class="text-[10px] font-normal">km/h</span></div>
             </div>
             <div>
-                <div class="text-[10px] text-slate-400 font-semibold">動画容量</div>
+                <div class="text-[10px] text-slate-400 font-semibold">映像容量</div>
                 <div id="hud-video-size" class="text-sm sm:text-base font-bold font-mono text-amber-400">0.0 <span class="text-[10px] font-normal">MB</span></div>
             </div>
         </div>
+    </div>
+
+    <!-- TOP LEFT: Fixed Single-Button Screen Layout Switcher (44x44px, unobstructed) -->
+    <div class="fixed left-3 top-[92px] z-30">
+        <button id="btn-cycle-layout" type="button" aria-label="画面表示切替" title="表示切替（地図小窓 → 上下分割 → カメラ全画面）" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-white text-lg shadow-lg border border-cyan-500/40 transition">
+            <span id="icon-cycle-layout">🗺️</span>
+        </button>
     </div>
 
     <!-- TOP RIGHT: Vertical Action Buttons (44x44px touch targets at top: 92px) -->
@@ -340,7 +336,7 @@
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.18.1243</span>
+                <span class="font-mono text-slate-400">v2026.11.18.1252</span>
             </div>
         </div>
     </div>
@@ -460,7 +456,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.18.1243';
+        const APP_VERSION = 'v2026.11.18.1252';
 
         // Map & Geolocation State
         let map = null;
@@ -503,14 +499,17 @@
         let cachedCammResult = null;
         let cameraFacingMode = 'environment';
         let currentLayoutMode = 'map';
+        const LAYOUT_MODES = ['map', 'split', 'camera'];
+        const LAYOUT_ICONS = { map: '🗺️', split: '🌗', camera: '📷' };
+        const LAYOUT_LABELS = { map: '地図メイン (小窓カメラ)', split: '上下/左右 分割表示', camera: 'カメラ全画面表示' };
 
         // CAMM Video Playback & Map Sync State
+        let isCammPlaybackActive = false;
         let cammPlaybackPoints = [];
         let cammPlaybackPolyline = null;
         let cammPlaybackMarker = null;
         let cammVideoObjectUrl = null;
         let isScrubbingCamm = false;
-        let isCammPlaybackActive = false;
 
         // Basemap Definitions
         const BASEMAPS = [
@@ -518,43 +517,50 @@
                 id: 'gsi_pale',
                 name: '国土地理院 淡色地図 (デフォルト)',
                 url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
-                attr: '&copy; 国土地理院'
+                attr: '&copy; 国土地理院',
+                maxNativeZoom: 18
             },
             {
                 id: 'gsi_std',
                 name: '国土地理院 標準地図',
                 url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
-                attr: '&copy; 国土地理院'
+                attr: '&copy; 国土地理院',
+                maxNativeZoom: 18
             },
             {
                 id: 'gsi_photo',
                 name: '国土地理院 航空写真',
                 url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
-                attr: '&copy; 国土地理院'
+                attr: '&copy; 国土地理院',
+                maxNativeZoom: 18
             },
             {
                 id: 'gsi_blank',
                 name: '国土地理院 白地図',
                 url: 'https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png',
-                attr: '&copy; 国土地理院'
+                attr: '&copy; 国土地理院',
+                maxNativeZoom: 14
             },
             {
                 id: 'osm',
                 name: 'OpenStreetMap',
                 url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                attr: '&copy; OpenStreetMap contributors'
+                attr: '&copy; OpenStreetMap contributors',
+                maxNativeZoom: 19
             },
             {
                 id: 'opentopo',
                 name: 'OpenTopoMap (地形図)',
                 url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-                attr: '&copy; OpenTopoMap'
+                attr: '&copy; OpenTopoMap',
+                maxNativeZoom: 17
             },
             {
                 id: 'esri_sat',
                 name: 'Esri World Imagery (衛星写真)',
                 url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                attr: '&copy; Esri'
+                attr: '&copy; Esri',
+                maxNativeZoom: 18
             }
         ];
 
@@ -607,6 +613,7 @@
             map = L.map(mapEl, {
                 center: [37.398, 140.388],
                 zoom: 13,
+                maxZoom: 21,
                 zoomControl: false,
                 attributionControl: true
             });
@@ -638,7 +645,8 @@
             }
             currentTileLayer = L.tileLayer(bm.url, {
                 attribution: bm.attr,
-                maxZoom: 19
+                maxNativeZoom: bm.maxNativeZoom || 18,
+                maxZoom: 21
             }).addTo(map);
         }
 
@@ -709,12 +717,17 @@
             currentLayoutMode = mode;
             const root = document.getElementById('workspace-root');
             const camBox = document.getElementById('camera-window');
+            const cycleIcon = document.getElementById('icon-cycle-layout');
             if (!root || !camBox) return;
 
             root.classList.remove('view-mode-split');
             camBox.classList.remove('camera-fullscreen');
             camBox.style.left = '';
             camBox.style.top = '';
+
+            if (cycleIcon) {
+                cycleIcon.textContent = LAYOUT_ICONS[mode] || '🗺️';
+            }
 
             if (mode === 'split') {
                 root.classList.add('view-mode-split');
@@ -730,9 +743,21 @@
                 }
             }
 
+            const overlayIcon = document.getElementById('icon-toggle-cam-overlay');
+            if (overlayIcon) {
+                overlayIcon.className = isCameraVisible ? 'fa-solid fa-video' : 'fa-solid fa-video-slash text-slate-400';
+            }
+
             setTimeout(() => {
                 if (map) map.invalidateSize();
             }, 150);
+        }
+
+        function cycleLayoutMode() {
+            const nextIdx = (LAYOUT_MODES.indexOf(currentLayoutMode) + 1) % LAYOUT_MODES.length;
+            const nextMode = LAYOUT_MODES[nextIdx];
+            setLayoutMode(nextMode);
+            showToast('表示モード切替', LAYOUT_LABELS[nextMode]);
         }
 
         function initPiPDragging() {
@@ -1585,9 +1610,7 @@ ${trkpts}
             });
 
             document.getElementById('btn-switch-camera').addEventListener('click', switchCameraFacing);
-            document.getElementById('btn-layout-map').addEventListener('click', () => setLayoutMode('map'));
-            document.getElementById('btn-layout-split').addEventListener('click', () => setLayoutMode('split'));
-            document.getElementById('btn-layout-cam').addEventListener('click', () => setLayoutMode('camera'));
+            document.getElementById('btn-cycle-layout').addEventListener('click', cycleLayoutMode);
 
             document.getElementById('btn-collapse-bottom').addEventListener('click', toggleBottomPanel);
 
