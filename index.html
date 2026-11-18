@@ -980,12 +980,31 @@
                     return;
                 }
 
-                mediaRecorder.onstop = () => {
-                    const mime = mediaRecorder.mimeType || 'video/mp4';
-                    recordedVideoBlob = new Blob(recordedChunks, { type: mime });
-                    const mbStr = (recordedVideoBlob.size / (1024 * 1024)).toFixed(2);
-                    document.getElementById('hud-video-size').innerHTML = `${mbStr} <span class="text-[10px] font-normal">MB</span>`;
+                let isResolved = false;
+                const finalizeBlob = () => {
+                    if (isResolved) return;
+                    isResolved = true;
+                    clearTimeout(fallbackTimer);
+
+                    const mime = (mediaRecorder && mediaRecorder.mimeType) || 'video/mp4';
+                    if (recordedChunks.length > 0) {
+                        recordedVideoBlob = new Blob(recordedChunks, { type: mime });
+                        const mbStr = (recordedVideoBlob.size / (1024 * 1024)).toFixed(2);
+                        document.getElementById('hud-video-size').innerHTML = `${mbStr} <span class="text-[10px] font-normal">MB</span>`;
+                    }
                     resolve(recordedVideoBlob);
+                };
+
+                // Safety timeout: prevents infinite hang if browser fails to fire onstop
+                const fallbackTimer = setTimeout(() => {
+                    console.warn('MediaRecorder.onstop timed out; finalizing with collected chunks.');
+                    finalizeBlob();
+                }, 1500);
+
+                mediaRecorder.onstop = finalizeBlob;
+                mediaRecorder.onerror = (err) => {
+                    console.warn('MediaRecorder error during stop:', err);
+                    finalizeBlob();
                 };
 
                 try {
@@ -996,7 +1015,12 @@
                     console.warn('requestData skipped:', e);
                 }
 
-                mediaRecorder.stop();
+                try {
+                    mediaRecorder.stop();
+                } catch (stopErr) {
+                    console.warn('mediaRecorder.stop() threw:', stopErr);
+                    finalizeBlob();
+                }
             });
         }
 
