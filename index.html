@@ -360,6 +360,17 @@
                 <span id="export-summary-badge" class="font-mono text-slate-200">0 pt / 0.0 MB</span>
             </div>
 
+            <!-- Filename Input -->
+            <div class="space-y-1.5">
+                <label for="input-export-filename" class="block text-xs font-bold text-slate-200">保存ファイル名（拡張子自動付与）</label>
+                <div class="flex items-center gap-1.5">
+                    <input type="text" id="input-export-filename" placeholder="CAMM_202611181235" class="flex-1 px-3 py-2.5 bg-slate-900/95 border border-slate-600 focus:border-cyan-400 focus:outline-none rounded-xl text-xs font-mono text-white" />
+                    <button id="btn-reset-export-filename" type="button" title="現在日時にリセット" class="px-2.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl text-xs text-slate-300">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+                </div>
+            </div>
+
             <div class="space-y-2.5">
                 <!-- Primary: CAMM MP4 Export Button -->
                 <button id="btn-export-camm-mp4" type="button" class="w-full py-3.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:scale-[0.99] text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-lg shadow-cyan-950/60 transition flex items-center justify-center gap-2">
@@ -1289,8 +1300,28 @@
             document.getElementById('export-summary-badge').textContent = `${recordedPoints.length} pt / ${sizeMB} MB`;
             document.getElementById('camm-btn-size').textContent = hasVideo ? `${sizeMB} MB` : 'GPSのみ';
 
+            const filenameInput = document.getElementById('input-export-filename');
+            if (filenameInput) {
+                filenameInput.value = `CAMM_${formatFilenameTimestamp()}`;
+            }
+
             document.getElementById('btn-open-export-modal').classList.remove('hidden');
             document.getElementById('modal-export-options').classList.remove('hidden');
+        }
+
+        function getSanitizedBaseFilename() {
+            const inputEl = document.getElementById('input-export-filename');
+            const defaultName = `CAMM_${formatFilenameTimestamp()}`;
+            if (!inputEl) return defaultName;
+
+            let raw = inputEl.value.trim();
+            if (!raw) return defaultName;
+
+            // Remove trailing extension if user typed one (.mp4, .webm, .zip, .gpx, etc.)
+            raw = raw.replace(/\.(mp4|webm|mov|m4v|zip|gpx|bin|json)$/i, '');
+            // Sanitize OS-forbidden filename characters
+            raw = raw.replace(/[\\/:*?"<>|]/g, '_').trim();
+            return raw || defaultName;
         }
 
         // 7. User-Selectable Save Destination Helper
@@ -1361,7 +1392,7 @@
             btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>動画データを準備中...</span>`;
 
             try {
-                const stamp = formatFilenameTimestamp();
+                const baseName = getSanitizedBaseFilename();
                 if (!recordedVideoBlob || recordedVideoBlob.size === 0) {
                     showToast('動画データがありません', 'カメラ映像が録画されなかったため、GPXファイルを保存します。', 'warning');
                     await handleExportGpx();
@@ -1371,7 +1402,7 @@
                 const result = cachedCammResult || await buildCammEmbeddedMp4(recordedVideoBlob, recordedPoints);
                 cachedCammResult = result;
 
-                const filename = `camm_track_${stamp}.${result.extension}`;
+                const filename = `${baseName}.${result.extension}`;
                 const sizeMB = (result.blob.size / (1024 * 1024)).toFixed(2);
                 const saveOutcome = await saveFileWithPicker(
                     result.blob,
@@ -1413,11 +1444,11 @@
             btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ZIP作成中...`;
 
             try {
-                const stamp = formatFilenameTimestamp();
+                const baseName = getSanitizedBaseFilename();
                 const zip = new JSZip();
 
-                zip.file(`track_${stamp}.gpx`, generateGpxString());
-                zip.file(`telemetry_${stamp}.camm.bin`, buildRawCammBinary(recordedPoints));
+                zip.file(`${baseName}.gpx`, generateGpxString());
+                zip.file(`${baseName}.camm.bin`, buildRawCammBinary(recordedPoints));
                 zip.file('telemetry.json', JSON.stringify({
                     version: APP_VERSION,
                     recordedAt: new Date(recordStartMs || Date.now()).toISOString(),
@@ -1429,11 +1460,11 @@
                 if (recordedVideoBlob && recordedVideoBlob.size > 0) {
                     const res = cachedCammResult || await buildCammEmbeddedMp4(recordedVideoBlob, recordedPoints);
                     cachedCammResult = res;
-                    zip.file(`camm_track_${stamp}.${res.extension}`, res.blob);
+                    zip.file(`${baseName}.${res.extension}`, res.blob);
                 }
 
                 const zipBlob = await zip.generateAsync({ type: 'blob' });
-                const zipName = `camm_session_${stamp}.zip`;
+                const zipName = `${baseName}.zip`;
                 const saveOutcome = await saveFileWithPicker(
                     zipBlob,
                     zipName,
@@ -1460,10 +1491,10 @@
                 showToast('記録データなし', 'GPSの走行ポイントが記録されていません。', 'warning');
                 return;
             }
-            const stamp = formatFilenameTimestamp();
+            const baseName = getSanitizedBaseFilename();
             const gpxContent = generateGpxString();
             const blob = new Blob([gpxContent], { type: 'application/gpx+xml' });
-            const filename = `track_${stamp}.gpx`;
+            const filename = `${baseName}.gpx`;
 
             const saveOutcome = await saveFileWithPicker(
                 blob,
@@ -1569,10 +1600,20 @@ ${trkpts}
             document.getElementById('btn-record-toggle').addEventListener('click', toggleRecording);
 
             document.getElementById('btn-open-export-modal').addEventListener('click', () => {
+                const filenameInput = document.getElementById('input-export-filename');
+                if (filenameInput && !filenameInput.value.trim()) {
+                    filenameInput.value = `CAMM_${formatFilenameTimestamp()}`;
+                }
                 document.getElementById('modal-export-options').classList.remove('hidden');
             });
             document.getElementById('close-export-modal').addEventListener('click', () => {
                 document.getElementById('modal-export-options').classList.add('hidden');
+            });
+            document.getElementById('btn-reset-export-filename').addEventListener('click', () => {
+                const filenameInput = document.getElementById('input-export-filename');
+                if (filenameInput) {
+                    filenameInput.value = `CAMM_${formatFilenameTimestamp()}`;
+                }
             });
 
             document.getElementById('btn-export-camm-mp4').addEventListener('click', handleExportCammMp4);
@@ -2141,7 +2182,7 @@ ${trkpts}
         function formatFilenameTimestamp() {
             const d = new Date();
             const pad = n => String(n).padStart(2, '0');
-            return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+            return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}`;
         }
 
         // 12. Screen Wake Lock API & Footer Status
