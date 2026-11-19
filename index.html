@@ -346,7 +346,7 @@
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.19.1907</span>
+                <span class="font-mono text-slate-400">v2026.11.19.1909</span>
             </div>
         </div>
     </div>
@@ -466,7 +466,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.19.1907';
+        const APP_VERSION = 'v2026.11.19.1909';
 
         // Map & Geolocation State
         let map = null;
@@ -770,6 +770,80 @@
             }
 
             updateSplitViewBottomOffset();
+        }
+
+        function cycleLayoutMode() {
+            const idx = LAYOUT_MODES.indexOf(currentLayoutMode);
+            const nextMode = LAYOUT_MODES[(idx + 1) % LAYOUT_MODES.length];
+            setLayoutMode(nextMode);
+        }
+
+        function toggleBottomPanel() {
+            const body = document.getElementById('bottom-panel-body');
+            const icon = document.getElementById('collapse-icon');
+            const label = document.getElementById('collapse-label');
+            if (!body) return;
+
+            isBottomCollapsed = !isBottomCollapsed;
+            if (isBottomCollapsed) {
+                body.classList.add('hidden');
+                if (icon) icon.textContent = '▲';
+                if (label) label.textContent = 'メニューを表示';
+            } else {
+                body.classList.remove('hidden');
+                if (icon) icon.textContent = '▼';
+                if (label) label.textContent = 'メニューを折りたたむ';
+            }
+            updateSplitViewBottomOffset();
+        }
+
+        function initPiPDragging() {
+            const camBox = document.getElementById('camera-window');
+            const header = document.getElementById('cam-drag-header');
+            if (!camBox || !header) return;
+
+            let isDragging = false;
+            let startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
+
+            const onStart = (clientX, clientY) => {
+                if (currentLayoutMode !== 'map') return;
+                isDragging = true;
+                const rect = camBox.getBoundingClientRect();
+                startX = clientX;
+                startY = clientY;
+                initialLeft = rect.left;
+                initialTop = rect.top;
+            };
+
+            const onMove = (clientX, clientY) => {
+                if (!isDragging || currentLayoutMode !== 'map') return;
+                const dx = clientX - startX;
+                const dy = clientY - startY;
+                const maxLeft = Math.max(0, window.innerWidth - camBox.offsetWidth);
+                const maxTop = Math.max(0, window.innerHeight - camBox.offsetHeight);
+                const newLeft = Math.max(0, Math.min(maxLeft, initialLeft + dx));
+                const newTop = Math.max(0, Math.min(maxTop, initialTop + dy));
+                camBox.style.left = `${newLeft}px`;
+                camBox.style.top = `${newTop}px`;
+            };
+
+            const onEnd = () => { isDragging = false; };
+
+            header.addEventListener('mousedown', (e) => {
+                if (e.target.closest('button')) return;
+                onStart(e.clientX, e.clientY);
+            });
+            window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
+            window.addEventListener('mouseup', onEnd);
+
+            header.addEventListener('touchstart', (e) => {
+                if (e.target.closest('button') || !e.touches[0]) return;
+                onStart(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: true });
+            window.addEventListener('touchmove', (e) => {
+                if (isDragging && e.touches[0]) onMove(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: true });
+            window.addEventListener('touchend', onEnd);
         }
 
         function updateSplitViewBottomOffset() {
@@ -1436,6 +1510,472 @@
             if (trackingMode === 1 && map) {
                 panWithBottomOffset([interp.lat, interp.lng], false);
             }
+        }
+
+        // 3. Geolocation Watch & Recording Engine
+        function startGeolocationWatch() {
+            if (!('geolocation' in navigator)) {
+                const badge = document.getElementById('cam-gps-badge');
+                if (badge) badge.textContent = 'GPS非対応ブラウザ';
+                return;
+            }
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            watchId = navigator.geolocation.watchPosition(
+                handlePositionUpdate,
+                (err) => {
+                    console.warn('Geolocation error:', err.message);
+                    const badge = document.getElementById('cam-gps-badge');
+                    if (badge && !isCammPlaybackActive) {
+                        badge.textContent = `GPS待機 (${err.code})`;
+                    }
+                },
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+            );
+
+            if (gpsFallbackInterval) clearInterval(gpsFallbackInterval);
+            gpsFallbackInterval = setInterval(() => {
+                if (isRecording && Date.now() - lastGpsFixMs > 2000) {
+                    navigator.geolocation.getCurrentPosition(
+                        handlePositionUpdate,
+                        () => {},
+                        { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+                    );
+                }
+            }, 1500);
+        }
+
+        function restartGeolocationWatch() {
+            startGeolocationWatch();
+        }
+
+        function handlePositionUpdate(pos) {
+            lastGpsFixMs = Date.now();
+            const { latitude: lat, longitude: lng, altitude, speed, heading } = pos.coords;
+            const ele = Number.isFinite(altitude) ? altitude : 0;
+            const spd = Number.isFinite(speed) && speed >= 0 ? speed : 0;
+            const hdg = Number.isFinite(heading) && heading >= 0 ? heading : 0;
+
+            currentPosition = { lat, lng, ele, speed: spd, heading: hdg, timestamp: pos.timestamp || Date.now() };
+            updateUserMarker(lat, lng, isRecording);
+
+            if (!isCammPlaybackActive) {
+                const badge = document.getElementById('cam-gps-badge');
+                if (badge) badge.textContent = `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+                document.getElementById('hud-speed').innerHTML = `${(spd * 3.6).toFixed(1)} <span class="text-[10px] font-normal">km/h</span>`;
+            }
+
+            if (isRecording) {
+                const nowMs = Date.now();
+                const offsetMs = Math.max(0, nowMs - recordStartMs);
+                if (recordedPoints.length > 0) {
+                    const prev = recordedPoints[recordedPoints.length - 1];
+                    const dist = haversineDistance(prev.lat, prev.lng, lat, lng);
+                    if (dist >= 0.5) {
+                        totalDistanceMeters += dist;
+                    }
+                }
+                recordedPoints.push({
+                    lat,
+                    lng,
+                    ele,
+                    speed: spd,
+                    heading: hdg,
+                    timestampOffsetMs: offsetMs,
+                    isoTime: new Date(nowMs).toISOString()
+                });
+                if (userPolyline) {
+                    userPolyline.setLatLngs(recordedPoints.map(p => [p.lat, p.lng]));
+                }
+                document.getElementById('hud-distance').innerHTML = `${(totalDistanceMeters / 1000).toFixed(2)} <span class="text-[10px] font-normal">km</span>`;
+                updateFooterTelemetryText();
+            }
+
+            if (trackingMode === 0 || trackingMode === 2) {
+                applyTrackingCamera();
+            }
+        }
+
+        function updateUserMarker(lat, lng, recordingActive) {
+            if (!map) return;
+            const html = recordingActive
+                ? `<div class="relative flex items-center justify-center w-6 h-6"><span class="pulse-ring"></span><span class="w-4 h-4 rounded-full bg-rose-500 border-2 border-white shadow-lg relative z-10"></span></div>`
+                : `<div class="relative flex items-center justify-center w-6 h-6"><span class="w-4 h-4 rounded-full bg-blue-500 border-2 border-white shadow-lg"></span></div>`;
+            const icon = L.divIcon({ html, className: '', iconSize: [24, 24], iconAnchor: [12, 12] });
+
+            if (!userMarker) {
+                userMarker = L.marker([lat, lng], { icon, zIndexOffset: 400 }).addTo(map);
+            } else {
+                userMarker.setLatLng([lat, lng]);
+                userMarker.setIcon(icon);
+            }
+        }
+
+        function panWithBottomOffset(latLng, animate = true) {
+            if (!map) return;
+            const panel = document.getElementById('bottom-control-panel');
+            const offsetY = (panel && !isBottomCollapsed && currentLayoutMode !== 'split')
+                ? Math.round(panel.offsetHeight * 0.35)
+                : 0;
+
+            if (offsetY > 0) {
+                const targetPoint = map.project(latLng, map.getZoom());
+                const shiftedPoint = L.point(targetPoint.x, targetPoint.y + offsetY);
+                const shiftedLatLng = map.unproject(shiftedPoint, map.getZoom());
+                map.panTo(shiftedLatLng, { animate });
+            } else {
+                map.panTo(latLng, { animate });
+            }
+        }
+
+        function applyTrackingCamera() {
+            if (!map) return;
+            if (trackingMode === 0 && currentPosition) {
+                panWithBottomOffset([currentPosition.lat, currentPosition.lng], true);
+            } else if (trackingMode === 1 && cammPlaybackMarker) {
+                const ll = cammPlaybackMarker.getLatLng();
+                panWithBottomOffset([ll.lat, ll.lng], false);
+            } else if (trackingMode === 2) {
+                const pts = [];
+                if (currentPosition) pts.push([currentPosition.lat, currentPosition.lng]);
+                recordedPoints.forEach(p => pts.push([p.lat, p.lng]));
+                cammPlaybackPoints.forEach(p => pts.push([p.lat, p.lng]));
+                if (pts.length > 0) {
+                    const bounds = L.latLngBounds(pts);
+                    if (bounds.isValid()) {
+                        const panel = document.getElementById('bottom-control-panel');
+                        const bottomPad = (panel && !isBottomCollapsed && currentLayoutMode !== 'split') ? panel.offsetHeight + 24 : 30;
+                        map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad], maxZoom: 18 });
+                    }
+                }
+            }
+        }
+
+        async function toggleRecording() {
+            if (!isRecording) {
+                await startRecordingSession();
+            } else {
+                await stopRecordingSession();
+            }
+        }
+
+        async function startRecordingSession() {
+            if (isCammPlaybackActive) {
+                closeCammPlayer();
+            }
+
+            isRecording = true;
+            recordStartMs = Date.now();
+            recordedPoints = [];
+            totalDistanceMeters = 0;
+            recordedChunks = [];
+            recordedBytesTotal = 0;
+            recordedVideoBlob = null;
+            cachedCammResult = null;
+
+            if (userPolyline) userPolyline.setLatLngs([]);
+            document.getElementById('btn-open-export-modal').classList.add('hidden');
+            document.getElementById('hud-distance').innerHTML = `0.00 <span class="text-[10px] font-normal">km</span>`;
+            document.getElementById('hud-video-size').innerHTML = `0.0 <span class="text-[10px] font-normal">MB</span>`;
+
+            if (currentPosition) {
+                recordedPoints.push({
+                    lat: currentPosition.lat,
+                    lng: currentPosition.lng,
+                    ele: currentPosition.ele || 0,
+                    speed: currentPosition.speed || 0,
+                    heading: currentPosition.heading || 0,
+                    timestampOffsetMs: 0,
+                    isoTime: new Date(recordStartMs).toISOString()
+                });
+                updateUserMarker(currentPosition.lat, currentPosition.lng, true);
+            }
+
+            const recBtn = document.getElementById('btn-record-toggle');
+            recBtn.classList.remove('bg-rose-600', 'hover:bg-rose-500');
+            recBtn.classList.add('bg-amber-600', 'hover:bg-amber-500');
+            document.getElementById('record-btn-label').textContent = '記録停止';
+            document.getElementById('cam-rec-badge').classList.remove('hidden');
+            document.getElementById('cam-size-badge').classList.remove('hidden');
+            document.getElementById('cam-size-badge').textContent = '0.0 MB';
+
+            await requestScreenWakeLock();
+
+            if (cameraStream) {
+                try {
+                    const mimeCandidates = [
+                        'video/mp4;codecs=avc1',
+                        'video/mp4',
+                        'video/webm;codecs=vp9,opus',
+                        'video/webm;codecs=vp8,opus',
+                        'video/webm'
+                    ];
+                    const chosenMime = mimeCandidates.find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) || '';
+                    mediaRecorder = chosenMime
+                        ? new MediaRecorder(cameraStream, { mimeType: chosenMime })
+                        : new MediaRecorder(cameraStream);
+
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data && e.data.size > 0) {
+                            recordedChunks.push(e.data);
+                            recordedBytesTotal += e.data.size;
+                            const mbStr = (recordedBytesTotal / (1024 * 1024)).toFixed(1);
+                            document.getElementById('hud-video-size').innerHTML = `${mbStr} <span class="text-[10px] font-normal">MB</span>`;
+                            document.getElementById('cam-size-badge').textContent = `${mbStr} MB`;
+                        }
+                    };
+                    mediaRecorder.start(250);
+                } catch (err) {
+                    console.warn('MediaRecorder start failed:', err);
+                }
+            }
+
+            if (elapsedTimerInterval) clearInterval(elapsedTimerInterval);
+            elapsedTimerInterval = setInterval(() => {
+                const sec = Math.floor((Date.now() - recordStartMs) / 1000);
+                const formatted = formatMMSS(sec);
+                document.getElementById('hud-elapsed').textContent = formatted;
+                document.getElementById('cam-rec-timer').textContent = formatted;
+            }, 250);
+
+            updateFooterTelemetryText();
+        }
+
+        async function stopRecordingSession() {
+            isRecording = false;
+            if (elapsedTimerInterval) {
+                clearInterval(elapsedTimerInterval);
+                elapsedTimerInterval = null;
+            }
+
+            const recBtn = document.getElementById('btn-record-toggle');
+            recBtn.disabled = true;
+            document.getElementById('record-btn-label').textContent = '動画確定中...';
+
+            await stopMediaRecordingAndFlush();
+            releaseScreenWakeLock();
+
+            recBtn.disabled = false;
+            recBtn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
+            recBtn.classList.add('bg-rose-600', 'hover:bg-rose-500');
+            document.getElementById('record-btn-label').textContent = '記録開始';
+            document.getElementById('cam-rec-badge').classList.add('hidden');
+            document.getElementById('cam-size-badge').classList.add('hidden');
+
+            if (currentPosition) {
+                updateUserMarker(currentPosition.lat, currentPosition.lng, false);
+            }
+
+            const sizeMb = recordedVideoBlob ? (recordedVideoBlob.size / (1024 * 1024)).toFixed(1) : '0.0';
+            document.getElementById('export-summary-badge').textContent = `${recordedPoints.length} pt / ${sizeMb} MB`;
+            document.getElementById('camm-btn-size').textContent = `${sizeMb} MB`;
+
+            const filenameInput = document.getElementById('input-export-filename');
+            if (filenameInput) {
+                filenameInput.value = `CAMM_${formatFilenameTimestamp()}`;
+            }
+
+            document.getElementById('btn-open-export-modal').classList.remove('hidden');
+            document.getElementById('modal-export-options').classList.remove('hidden');
+            updateFooterTelemetryText();
+        }
+
+        function stopMediaRecordingAndFlush() {
+            return new Promise((resolve) => {
+                if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                    if (recordedChunks.length > 0) {
+                        const type = recordedChunks[0].type || 'video/mp4';
+                        recordedVideoBlob = new Blob(recordedChunks, { type });
+                    }
+                    mediaRecorder = null;
+                    resolve();
+                    return;
+                }
+
+                let settled = false;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(fallbackTimer);
+                    const mime = (mediaRecorder && mediaRecorder.mimeType) || (recordedChunks[0] && recordedChunks[0].type) || 'video/mp4';
+                    if (recordedChunks.length > 0) {
+                        recordedVideoBlob = new Blob(recordedChunks, { type: mime });
+                    }
+                    mediaRecorder = null;
+                    resolve();
+                };
+
+                const fallbackTimer = setTimeout(finish, 1500);
+                mediaRecorder.onstop = finish;
+                mediaRecorder.onerror = finish;
+
+                try {
+                    if (typeof mediaRecorder.requestData === 'function') {
+                        mediaRecorder.requestData();
+                    }
+                    mediaRecorder.stop();
+                } catch (err) {
+                    finish();
+                }
+            });
+        }
+
+        function getSanitizedBaseFilename() {
+            const raw = (document.getElementById('input-export-filename')?.value || '').trim();
+            const cleaned = raw.replace(/[\\/:*?"<>|]/g, '_');
+            return cleaned || `CAMM_${formatFilenameTimestamp()}`;
+        }
+
+        function buildRawCammBinaryBuffer(points) {
+            const recordSize = 42;
+            const buf = new ArrayBuffer(points.length * recordSize);
+            const view = new DataView(buf);
+            points.forEach((p, idx) => {
+                const offset = idx * recordSize;
+                view.setFloat64(offset + 0, p.timestampOffsetMs || idx * 1000, true);
+                view.setUint16(offset + 8, 5, true);
+                view.setFloat64(offset + 10, p.lat, true);
+                view.setFloat64(offset + 18, p.lng, true);
+                view.setFloat64(offset + 26, p.ele || 0, true);
+                view.setFloat32(offset + 34, p.speed || 0, true);
+                view.setFloat32(offset + 38, p.heading || 0, true);
+            });
+            return buf;
+        }
+
+        async function buildCammEmbeddedVideoBlob() {
+            if (cachedCammResult) return cachedCammResult;
+
+            const baseBlob = recordedVideoBlob || new Blob([], { type: 'video/mp4' });
+            const rawBuf = await baseBlob.arrayBuffer();
+            const payloadObj = {
+                version: APP_VERSION,
+                createdAt: new Date().toISOString(),
+                points: recordedPoints
+            };
+            const encoder = new TextEncoder();
+            const jsonBytes = encoder.encode(JSON.stringify(payloadObj));
+
+            // Build ISO BMFF 'free' box + trailing 'CAMMJSON...CAMMEND!' marker
+            const innerSize = 8 + jsonBytes.byteLength + 4 + 8;
+            const freeBoxSize = 8 + innerSize;
+            const combined = new Uint8Array(rawBuf.byteLength + freeBoxSize);
+            combined.set(new Uint8Array(rawBuf), 0);
+
+            let offset = rawBuf.byteLength;
+            const view = new DataView(combined.buffer);
+            view.setUint32(offset, freeBoxSize, false);
+            combined.set([0x66, 0x72, 0x65, 0x65], offset + 4); // 'free'
+            offset += 8;
+
+            combined.set(encoder.encode('CAMMJSON'), offset);
+            offset += 8;
+            combined.set(jsonBytes, offset);
+            offset += jsonBytes.byteLength;
+            view.setUint32(offset, jsonBytes.byteLength, true);
+            offset += 4;
+            combined.set(encoder.encode('CAMMEND!'), offset);
+
+            const isWebm = (baseBlob.type || '').toLowerCase().includes('webm');
+            const ext = isWebm ? 'webm' : 'mp4';
+            const finalBlob = new Blob([combined], { type: baseBlob.type || 'video/mp4' });
+            cachedCammResult = { blob: finalBlob, ext };
+            return cachedCammResult;
+        }
+
+        function buildGpxXmlString(points, trackName) {
+            const trkpts = points.map(p => {
+                const t = p.isoTime || new Date(recordStartMs + (p.timestampOffsetMs || 0)).toISOString();
+                return `      <trkpt lat="${p.lat.toFixed(7)}" lon="${p.lng.toFixed(7)}">\n        <ele>${(p.ele || 0).toFixed(1)}</ele>\n        <time>${t}</time>\n      </trkpt>`;
+            }).join('\n');
+
+            return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GPS Tracker &amp; CAMM Video Recorder ${APP_VERSION}" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk>\n    <name>${trackName}</name>\n    <trkseg>\n${trkpts}\n    </trkseg>\n  </trk>\n</gpx>`;
+        }
+
+        async function saveBlobWithDestination(blob, filename, mimeType) {
+            const useShare = document.getElementById('chk-use-share-sheet')?.checked;
+            if (useShare && typeof navigator.share === 'function') {
+                try {
+                    const file = new File([blob], filename, { type: mimeType });
+                    if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+                        await navigator.share({ files: [file], title: filename });
+                        showToast('共有シートから保存完了', `${filename} を出力しました。`);
+                        return;
+                    }
+                } catch (err) {
+                    if (err && err.name === 'AbortError') return;
+                }
+            }
+
+            if (typeof window.showSaveFilePicker === 'function') {
+                try {
+                    const ext = filename.includes('.') ? '.' + filename.split('.').pop() : '.mp4';
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: filename,
+                        types: [{ description: 'CAMM / GPS File', accept: { [mimeType]: [ext] } }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    showToast('指定先へ保存完了', `${filename} を指定フォルダに保存しました。`);
+                    return;
+                } catch (err) {
+                    if (err && err.name === 'AbortError') return;
+                }
+            }
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+            showToast('ダウンロード保存完了', `${filename} をダウンロードフォルダに保存しました。`);
+        }
+
+        async function handleExportCammMp4() {
+            if (!recordedVideoBlob && recordedPoints.length === 0) {
+                showToast('保存データなし', '先に記録を実行してから保存してください。', 'warning');
+                return;
+            }
+            const baseName = getSanitizedBaseFilename();
+            const { blob, ext } = await buildCammEmbeddedVideoBlob();
+            await saveBlobWithDestination(blob, `${baseName}.${ext}`, blob.type || 'video/mp4');
+        }
+
+        async function handleExportZipBundle() {
+            if (!recordedVideoBlob && recordedPoints.length === 0) {
+                showToast('保存データなし', '先に記録を実行してから保存してください。', 'warning');
+                return;
+            }
+            const baseName = getSanitizedBaseFilename();
+            const zip = new JSZip();
+            const { blob, ext } = await buildCammEmbeddedVideoBlob();
+            zip.file(`${baseName}.${ext}`, blob);
+            zip.file(`${baseName}.gpx`, buildGpxXmlString(recordedPoints, baseName));
+            zip.file(`${baseName}.camm.bin`, buildRawCammBinaryBuffer(recordedPoints));
+            zip.file(`${baseName}_telemetry.json`, JSON.stringify({
+                version: APP_VERSION,
+                points: recordedPoints
+            }, null, 2));
+
+            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            await saveBlobWithDestination(zipBlob, `${baseName}.zip`, 'application/zip');
+        }
+
+        async function handleExportGpx() {
+            if (recordedPoints.length === 0) {
+                showToast('GPSデータなし', '記録されたGPSポイントがありません。', 'warning');
+                return;
+            }
+            const baseName = getSanitizedBaseFilename();
+            const gpxText = buildGpxXmlString(recordedPoints, baseName);
+            const blob = new Blob([gpxText], { type: 'application/gpx+xml' });
+            await saveBlobWithDestination(blob, `${baseName}.gpx`, 'application/gpx+xml');
         }
 
         function computeBearingDeg(lat1, lon1, lat2, lon2) {
