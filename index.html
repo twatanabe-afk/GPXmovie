@@ -81,7 +81,6 @@
             box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
             border: 1.5px solid rgba(56, 189, 248, 0.45);
             background: #020617;
-            transition: width 0.25s ease, height 0.25s ease;
         }
 
         @media (min-width: 640px) {
@@ -89,6 +88,28 @@
                 width: 240px;
                 height: 180px;
             }
+        }
+
+        /* Resize Handle for PiP Camera Window */
+        .cam-resize-handle {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 28px;
+            height: 28px;
+            z-index: 30;
+            cursor: nwse-resize;
+            touch-action: none;
+            display: flex;
+            align-items: flex-end;
+            justify-content: flex-end;
+            padding: 4px;
+            background: linear-gradient(135deg, transparent 50%, rgba(56, 189, 248, 0.55) 50%);
+            border-bottom-right-radius: 0.9rem;
+        }
+        .camera-fullscreen .cam-resize-handle,
+        .view-mode-split .cam-resize-handle {
+            display: none !important;
         }
 
         /* Fullscreen Camera Mode */
@@ -223,229 +244,10 @@
                 <div id="cam-gps-badge" class="absolute bottom-2 left-2 px-2 py-0.5 bg-slate-900/80 border border-slate-700/80 text-[10px] font-mono rounded-md text-emerald-400">
                     GPS: 測位中...
                 </div>
-            </div>
-        </div>
-    </div>
 
-    <!-- TOP CENTER: Live Telemetry HUD -->
-    <div class="fixed top-3 left-1/2 -translate-x-1/2 z-30 w-[94%] max-w-md glass-panel rounded-2xl px-3 py-2.5">
-        <div class="grid grid-cols-4 gap-1 text-center">
-            <div>
-                <div class="text-[10px] text-slate-400 font-semibold">経過時間</div>
-                <div id="hud-elapsed" class="text-sm sm:text-base font-bold font-mono text-white">00:00</div>
-            </div>
-            <div>
-                <div class="text-[10px] text-slate-400 font-semibold">走行距離</div>
-                <div id="hud-distance" class="text-sm sm:text-base font-bold font-mono text-cyan-400">0.00 <span class="text-[10px] font-normal">km</span></div>
-            </div>
-            <div>
-                <div class="text-[10px] text-slate-400 font-semibold">現在速度</div>
-                <div id="hud-speed" class="text-sm sm:text-base font-bold font-mono text-emerald-400">0.0 <span class="text-[10px] font-normal">km/h</span></div>
-            </div>
-            <div>
-                <div class="text-[10px] text-slate-400 font-semibold">映像容量</div>
-                <div id="hud-video-size" class="text-sm sm:text-base font-bold font-mono text-amber-400">0.0 <span class="text-[10px] font-normal">MB</span></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- TOP LEFT: Fixed Single-Button Screen Layout Switcher (44x44px, unobstructed) -->
-    <div class="fixed left-3 top-[92px] z-30">
-        <button id="btn-cycle-layout" type="button" aria-label="画面表示切替" title="表示切替（地図小窓 → 上下分割 → カメラ全画面）" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-white text-lg shadow-lg border border-cyan-500/40 transition">
-            <span id="icon-cycle-layout">🗺️</span>
-        </button>
-    </div>
-
-    <!-- TOP RIGHT: Vertical Action Buttons (44x44px touch targets at top: 92px) -->
-    <div class="fixed right-3 top-[92px] z-30 flex flex-col gap-2.5">
-        <button id="btn-zoom-in" type="button" aria-label="拡大" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-white text-lg font-bold shadow-lg transition">
-            ＋
-        </button>
-        <button id="btn-zoom-out" type="button" aria-label="縮小" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-white text-lg font-bold shadow-lg transition">
-            －
-        </button>
-        <button id="btn-map-layers" type="button" aria-label="地図切替" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition">
-            🗺️
-        </button>
-        <button id="btn-track-style" type="button" aria-label="スタイル設定" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition">
-            🎨
-        </button>
-        <button id="btn-toggle-cam-overlay" type="button" aria-label="カメラ表示切替" title="カメラウィンドウ表示/非表示" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-cyan-300 text-base shadow-lg transition">
-            <i id="icon-toggle-cam-overlay" class="fa-solid fa-video"></i>
-        </button>
-        <button id="btn-open-camm-file" type="button" aria-label="CAMM動画読込" title="CAMM動画/ZIP読み込み" class="w-11 h-11 glass-panel hover:bg-slate-800 active:scale-95 rounded-xl flex items-center justify-center text-lg shadow-lg transition border border-cyan-500/40">
-            📂
-        </button>
-        <!-- iOS Safari compatible unrestricted file input (extension checked in JS) -->
-        <input type="file" id="input-camm-file" class="hidden" />
-    </div>
-
-    <!-- BOTTOM RECORDING & EXPORT CONTROL PANEL -->
-    <div id="bottom-control-panel" class="fixed bottom-0 left-0 right-0 z-30 glass-panel rounded-t-3xl border-t border-slate-700/80 transition-all duration-300">
-        <!-- Collapse / Expand Toggle Bar -->
-        <button id="btn-collapse-bottom" type="button" class="w-full py-2 px-4 flex items-center justify-center gap-2 text-xs font-bold text-slate-300 hover:text-white border-b border-slate-800/80">
-            <span id="collapse-icon">▼</span>
-            <span id="collapse-label">メニューを折りたたむ</span>
-        </button>
-
-        <!-- Collapsible Body -->
-        <div id="bottom-panel-body" class="p-2.5 sm:p-3.5 max-w-xl mx-auto space-y-2">
-            <!-- SLIM CAMM VIDEO PLAYBACK SCRUBBER PANEL (Shown when a CAMM video/ZIP is loaded) -->
-            <div id="camm-player-panel" class="hidden bg-slate-900/95 border border-cyan-500/50 rounded-xl px-2.5 py-2 space-y-1.5 shadow-inner">
-                <div class="flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-1.5 min-w-0">
-                        <span class="text-[11px]">🎬</span>
-                        <span id="camm-loaded-title" class="text-[11px] font-extrabold text-cyan-300 truncate">CAMM動画プレイヤー</span>
-                        <span id="camm-telemetry-badge" class="text-[9px] font-mono bg-slate-800 text-emerald-300 px-1.5 py-0.5 rounded shrink-0">
-                            0 pt
-                        </span>
-                    </div>
-                    <button id="btn-close-camm-player" type="button" title="プレイヤーを閉じる" class="px-2 py-0.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-white rounded text-[10px] font-bold transition shrink-0">
-                        ✕
-                    </button>
-                </div>
-
-                <!-- Single-row Compact Playback Controls & Scrubber -->
-                <div class="flex items-center gap-2">
-                    <button id="btn-camm-play-pause" type="button" class="w-8 h-8 shrink-0 rounded-lg bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white text-xs flex items-center justify-center shadow transition">
-                        <i id="icon-camm-play-pause" class="fa-solid fa-play"></i>
-                    </button>
-
-                    <span id="camm-time-current" class="text-[10px] font-mono text-slate-300 shrink-0">00:00.0</span>
-
-                    <input type="range" id="slider-camm-seek" min="0" max="100" step="0.05" value="0" class="flex-1 accent-cyan-400 cursor-pointer h-1.5 bg-slate-700 rounded-lg min-w-0" />
-
-                    <span id="camm-time-total" class="text-[10px] font-mono text-slate-400 shrink-0">00:00.0</span>
-                </div>
-                <div class="flex items-center justify-between text-[9px] font-mono text-cyan-300/90">
-                    <span id="camm-point-index-readout">pt 0 / 0</span>
-                    <span id="camm-coord-readout" class="truncate">---, ---</span>
-                </div>
-            </div>
-
-            <!-- Compact Bottom Action Row (Never blocks map view) -->
-            <div class="flex items-center gap-1.5">
-                <button id="btn-track-mode" type="button" class="py-3 px-2 bg-slate-800/95 hover:bg-slate-700 border border-slate-600/80 rounded-xl text-[11px] font-bold text-cyan-400 active:scale-95 transition text-center truncate shrink-0">
-                    追尾: 現在地
-                </button>
-
-                <button id="btn-load-camm-inline" type="button" class="py-3 px-2.5 bg-slate-800/95 hover:bg-slate-700 border border-cyan-500/50 rounded-xl text-[11px] font-bold text-cyan-300 active:scale-95 transition flex items-center justify-center gap-1 shrink-0">
-                    <span>📂 読込</span>
-                </button>
-
-                <button id="btn-open-export-modal" type="button" class="hidden py-3 px-2.5 bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-400/70 rounded-xl text-[11px] font-extrabold text-cyan-300 active:scale-95 transition flex items-center justify-center gap-1 shrink-0 shadow">
-                    <span>💾 出力</span>
-                </button>
-
-                <button id="btn-record-toggle" type="button" class="flex-1 py-3 px-2.5 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white rounded-xl font-extrabold text-xs shadow-lg shadow-rose-950/60 transition flex items-center justify-center gap-1.5 min-w-0">
-                    <span id="record-btn-dot" class="w-2.5 h-2.5 rounded-full bg-white inline-block shrink-0"></span>
-                    <span id="record-btn-label" class="truncate">記録開始</span>
-                </button>
-            </div>
-
-            <!-- Footer Status & Version -->
-            <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
-                <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.19.1909</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL: Export & Save Options (Keeps map unobstructed) -->
-    <div id="modal-export-options" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm hidden flex items-center justify-center p-4">
-        <div class="glass-panel w-full max-w-sm rounded-3xl p-5 space-y-4">
-            <div class="flex items-center justify-between">
-                <h3 class="text-base font-extrabold text-white flex items-center gap-2">💾 記録データの保存・出力</h3>
-                <button id="close-export-modal" type="button" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-
-            <div class="flex items-center justify-between text-xs bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-700/80">
-                <span class="font-bold text-cyan-300">記録サマリー</span>
-                <span id="export-summary-badge" class="font-mono text-slate-200">0 pt / 0.0 MB</span>
-            </div>
-
-            <!-- Filename Input -->
-            <div class="space-y-1.5">
-                <label for="input-export-filename" class="block text-xs font-bold text-slate-200">保存ファイル名（拡張子自動付与）</label>
-                <div class="flex items-center gap-1.5">
-                    <input type="text" id="input-export-filename" placeholder="CAMM_202611181235" class="flex-1 px-3 py-2.5 bg-slate-900/95 border border-slate-600 focus:border-cyan-400 focus:outline-none rounded-xl text-xs font-mono text-white" />
-                    <button id="btn-reset-export-filename" type="button" title="現在日時にリセット" class="px-2.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl text-xs text-slate-300">
-                        <i class="fa-solid fa-rotate-right"></i>
-                    </button>
-                </div>
-            </div>
-
-            <div class="space-y-2.5">
-                <!-- Primary: CAMM MP4 Export Button -->
-                <button id="btn-export-camm-mp4" type="button" class="w-full py-3.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 active:scale-[0.99] text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-lg shadow-cyan-950/60 transition flex items-center justify-center gap-2">
-                    <span>📹 CAMM MP4動画を保存</span>
-                    <span id="camm-btn-size" class="text-[11px] font-mono font-normal bg-black/25 px-2 py-0.5 rounded-full">0.0 MB</span>
-                </button>
-
-                <!-- Secondary & Tertiary Export Buttons -->
-                <button id="btn-export-zip" type="button" class="w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-600 active:scale-95 text-amber-300 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5">
-                    <span>📦 ZIP一括保存 (MP4 + GPX + CAMM)</span>
-                </button>
-
-                <button id="btn-export-gpx" type="button" class="w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 border border-slate-600 active:scale-95 text-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5">
-                    <span>📄 GPX軌跡のみ保存</span>
-                </button>
-            </div>
-
-            <!-- Mobile Share Sheet Option -->
-            <div class="pt-2 border-t border-slate-800 text-[11px] text-slate-300">
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" id="chk-use-share-sheet" class="rounded accent-cyan-500 w-4 h-4 shrink-0">
-                    <span>スマホ共有メニュー（「ファイルに保存」でフォルダ指定）を使う</span>
-                </label>
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL: Basemap Switcher -->
-    <div id="modal-map-layers" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
-        <div class="glass-panel w-full max-w-sm rounded-3xl p-5 space-y-4">
-            <div class="flex items-center justify-between">
-                <h3 class="text-base font-extrabold text-white flex items-center gap-2">🗺️ 背景地図の切り替え</h3>
-                <button id="close-map-modal" type="button" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-            <div class="grid grid-cols-1 gap-2 max-h-[60vh] overflow-y-auto pr-1" id="basemap-list">
-                <!-- Populated by JS -->
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL: Track Style Customizer -->
-    <div id="modal-track-style" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
-        <div class="glass-panel w-full max-w-sm rounded-3xl p-5 space-y-4">
-            <div class="flex items-center justify-between">
-                <h3 class="text-base font-extrabold text-white flex items-center gap-2">🎨 軌跡ライン設定</h3>
-                <button id="close-style-modal" type="button" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
-                    <i class="fa-solid fa-xmark"></i>
-                </button>
-            </div>
-            <div class="space-y-4 text-xs">
-                <div class="flex items-center justify-between bg-slate-900/80 p-3 rounded-xl border border-slate-700/70">
-                    <span class="font-bold text-slate-200">軌跡カラー</span>
-                    <input type="color" id="input-track-color" value="#ff2d55" class="w-10 h-8 rounded cursor-pointer bg-transparent border-0">
-                </div>
-                <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-700/70 space-y-2">
-                    <div class="flex justify-between">
-                        <span class="font-bold text-slate-200">線の太さ</span>
-                        <span id="label-track-weight" class="font-mono text-cyan-400">10 px</span>
-                    </div>
-                    <input type="range" id="input-track-weight" min="1" max="20" value="10" class="w-full accent-cyan-500">
-                </div>
-                <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-700/70 space-y-2">
-                    <div class="flex justify-between">
-                        <span class="font-bold text-slate-200">不透明度</span>
-                        <span id="label-track-opacity" class="font-mono text-cyan-400">90 %</span>
-                    </div>
-                    <input type="range" id="input-track-opacity" min="10" max="100" value="90" class="w-full accent-cyan-500">
+                <!-- Corner Resize Handle -->
+                <div id="cam-resize-handle" class="cam-resize-handle" title="ドラッグでサイズ変更">
+                    <i class="fa-solid fa-up-right-and-down-left-from-center text-[9px] text-white rotate-90 drop-shadow"></i>
                 </div>
             </div>
         </div>
@@ -459,72 +261,269 @@
                 <div id="toast-title" class="text-xs font-extrabold text-white truncate">保存完了</div>
                 <div id="toast-desc" class="text-[11px] text-slate-300 mt-0.5 leading-relaxed"></div>
             </div>
-            <button id="toast-close" type="button" class="text-slate-400 hover:text-white px-1">
+            <button id="toast-close" type="button" class="text-slate-400 hover:text-white px-1.5 py-0.5 text-xs">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
     </div>
 
-    <script>
-        const APP_VERSION = 'v2026.11.19.1909';
+    <!-- TOP CENTER LIVE TELEMETRY HUD -->
+    <div id="top-telemetry-hud" class="fixed top-3 left-1/2 -translate-x-1/2 z-20 w-[94%] max-w-lg glass-panel rounded-2xl px-3.5 py-2 pointer-events-none">
+        <div class="grid grid-cols-4 gap-2 text-center">
+            <div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">TIME</div>
+                <div id="hud-elapsed" class="text-sm font-extrabold font-mono text-white">00:00</div>
+            </div>
+            <div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">DIST</div>
+                <div id="hud-distance" class="text-sm font-extrabold font-mono text-cyan-300">0.00 <span class="text-[10px] font-normal">km</span></div>
+            </div>
+            <div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">SPEED</div>
+                <div id="hud-speed" class="text-sm font-extrabold font-mono text-emerald-300">0.0 <span class="text-[10px] font-normal">km/h</span></div>
+            </div>
+            <div>
+                <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">VIDEO</div>
+                <div id="hud-video-size" class="text-sm font-extrabold font-mono text-rose-300">0.0 <span class="text-[10px] font-normal">MB</span></div>
+            </div>
+        </div>
+    </div>
 
-        // Map & Geolocation State
+    <!-- TOP LEFT FIXED SINGLE LAYOUT TOGGLE BUTTON (44x44px) -->
+    <div class="fixed top-[92px] left-3 z-20 flex flex-col gap-2">
+        <button id="btn-cycle-layout" type="button" title="表示レイアウト切替 (地図 / 分割 / カメラ)" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-lg shadow-lg transition">
+            <span id="icon-cycle-layout">🗺️</span>
+        </button>
+    </div>
+
+    <!-- TOP RIGHT ACTION BUTTONS (44x44px Vertical Stack) -->
+    <div class="fixed top-[92px] right-3 z-20 flex flex-col gap-2">
+        <button id="btn-zoom-in" type="button" title="拡大" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-lg font-extrabold text-white shadow-lg transition">＋</button>
+        <button id="btn-zoom-out" type="button" title="縮小" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-lg font-extrabold text-white shadow-lg transition">－</button>
+        <button id="btn-map-layers" type="button" title="背景地図切替" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-base shadow-lg transition">🗺️</button>
+        <button id="btn-track-style" type="button" title="軌跡スタイル設定" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-base shadow-lg transition">🎨</button>
+        <button id="btn-toggle-cam-overlay" type="button" title="カメラ小窓表示切替" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-sm text-cyan-300 shadow-lg transition">
+            <i id="icon-toggle-cam-overlay" class="fa-solid fa-video"></i>
+        </button>
+        <button id="btn-open-camm-file" type="button" title="CAMM動画/ZIP読込" class="w-11 h-11 rounded-xl glass-panel hover:bg-slate-800/90 active:scale-95 flex items-center justify-center text-sm text-amber-300 shadow-lg transition">
+            <i class="fa-solid fa-folder-open"></i>
+        </button>
+    </div>
+
+    <!-- HIDDEN FILE INPUT (iOS Safari compatible: no accept attribute) -->
+    <input id="input-camm-file" type="file" class="hidden" />
+
+    <!-- BOTTOM CONTROL PANEL -->
+    <div id="bottom-control-panel" class="fixed bottom-0 left-0 right-0 z-30 glass-panel rounded-t-2xl border-t border-slate-700/80 px-3 pt-1.5 pb-2.5 shadow-2xl">
+        <!-- Collapse / Expand Handle Bar -->
+        <button id="btn-collapse-bottom" type="button" class="w-full flex items-center justify-center gap-1.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white">
+            <span id="collapse-icon">▼</span>
+            <span id="collapse-label">メニューを折りたたむ</span>
+        </button>
+
+        <div id="bottom-panel-body" class="space-y-2 mt-1">
+            <!-- Slim CAMM Playback Bar (Shown when CAMM video/ZIP is loaded) -->
+            <div id="camm-player-panel" class="hidden bg-slate-900/90 border border-cyan-500/40 rounded-xl px-2.5 py-2 space-y-1.5">
+                <div class="flex items-center justify-between gap-2 text-[10px]">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold shrink-0">CAMM</span>
+                        <span id="camm-loaded-title" class="font-bold text-slate-100 truncate">file.mp4</span>
+                        <span id="camm-telemetry-badge" class="text-cyan-400 font-mono shrink-0">0 pt</span>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <span id="camm-point-index-readout" class="font-mono text-slate-400">pt 0 / 0</span>
+                        <button id="btn-close-camm-player" type="button" title="プレイヤーを閉じる" class="text-slate-400 hover:text-rose-400 px-1">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <button id="btn-camm-play-pause" type="button" class="w-8 h-8 rounded-lg bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white flex items-center justify-center shrink-0 text-xs">
+                        <i id="icon-camm-play-pause" class="fa-solid fa-play"></i>
+                    </button>
+                    <span id="camm-time-current" class="text-[10px] font-mono text-slate-200 w-12 text-right shrink-0">00:00.0</span>
+                    <input id="slider-camm-seek" type="range" min="0" max="100" step="0.05" value="0" class="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
+                    <span id="camm-time-total" class="text-[10px] font-mono text-slate-400 w-12 shrink-0">00:00.0</span>
+                </div>
+                <div id="camm-coord-readout" class="text-[10px] font-mono text-slate-400 text-right truncate">---</div>
+            </div>
+
+            <!-- Primary Action Row -->
+            <div class="grid grid-cols-12 gap-2">
+                <button id="btn-track-mode" type="button" class="col-span-4 py-2.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-600/80 text-[11px] font-extrabold text-cyan-300 truncate transition">
+                    追尾: 現在地
+                </button>
+                <button id="btn-record-toggle" type="button" class="col-span-5 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-xs font-extrabold text-white shadow-lg flex items-center justify-center gap-1.5 transition">
+                    <span class="w-2.5 h-2.5 rounded-full bg-white"></span>
+                    <span id="record-btn-label">記録開始</span>
+                </button>
+                <button id="btn-load-camm-inline" type="button" class="col-span-3 py-2.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-600/80 text-[11px] font-bold text-amber-300 truncate transition">
+                    📂 読込
+                </button>
+            </div>
+
+            <!-- Export Trigger Row (Shown after recording stops) -->
+            <button id="btn-open-export-modal" type="button" class="hidden w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-98 text-xs font-extrabold text-white shadow-lg flex items-center justify-center gap-2 transition">
+                <span>💾 記録データの保存・出力を開く</span>
+            </button>
+
+            <!-- Footer Status & Version -->
+            <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
+                <span class="font-mono text-slate-400">v2026.11.20.0835</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: BASEMAP LAYER SWITCHER -->
+    <div id="modal-map-layers" class="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="glass-panel rounded-2xl w-full max-w-sm p-4 space-y-3">
+            <div class="flex items-center justify-between border-b border-slate-700/80 pb-2">
+                <h3 class="text-sm font-extrabold text-white">🗺️ 背景地図の切り替え</h3>
+                <button id="close-map-modal" type="button" class="text-slate-400 hover:text-white px-2 py-1 text-sm">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div id="basemap-list" class="space-y-2 max-h-[60vh] overflow-y-auto pr-1"></div>
+        </div>
+    </div>
+
+    <!-- MODAL: TRACK STYLE CUSTOMIZER -->
+    <div id="modal-track-style" class="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="glass-panel rounded-2xl w-full max-w-sm p-4 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-700/80 pb-2">
+                <h3 class="text-sm font-extrabold text-white">🎨 走行軌跡スタイル設定</h3>
+                <button id="close-style-modal" type="button" class="text-slate-400 hover:text-white px-2 py-1 text-sm">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div class="flex items-center justify-between">
+                    <label for="input-track-color" class="font-bold text-slate-200">ラインカラー</label>
+                    <input id="input-track-color" type="color" value="#ff2d55" class="w-12 h-8 rounded bg-transparent cursor-pointer" />
+                </div>
+                <div class="space-y-1">
+                    <div class="flex justify-between font-bold text-slate-200">
+                        <span>ライン太さ</span>
+                        <span id="label-track-weight" class="font-mono text-cyan-300">10 px</span>
+                    </div>
+                    <input id="input-track-weight" type="range" min="1" max="20" value="10" class="w-full accent-cyan-400" />
+                </div>
+                <div class="space-y-1">
+                    <div class="flex justify-between font-bold text-slate-200">
+                        <span>不透明度</span>
+                        <span id="label-track-opacity" class="font-mono text-cyan-300">90 %</span>
+                    </div>
+                    <input id="input-track-opacity" type="range" min="10" max="100" value="90" class="w-full accent-cyan-400" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EXPORT & SAVE DESTINATION -->
+    <div id="modal-export-options" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="glass-panel rounded-2xl w-full max-w-md p-4 space-y-3.5">
+            <div class="flex items-center justify-between border-b border-slate-700/80 pb-2">
+                <div>
+                    <h3 class="text-sm font-extrabold text-white">💾 記録データの保存・出力</h3>
+                    <span id="export-summary-badge" class="text-[11px] font-mono text-cyan-300">0 pt / 0.0 MB</span>
+                </div>
+                <button id="close-export-modal" type="button" class="text-slate-400 hover:text-white px-2 py-1 text-sm">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Filename Input -->
+            <div class="space-y-1">
+                <label for="input-export-filename" class="text-[11px] font-bold text-slate-300">保存ファイル名 (拡張子自動付与)</label>
+                <div class="flex gap-1.5">
+                    <input id="input-export-filename" type="text" placeholder="CAMM_202611200835" class="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-400" />
+                    <button id="btn-reset-export-filename" type="button" title="現在日時でリセット" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-200">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mobile Share Sheet Toggle -->
+            <label class="flex items-center gap-2 text-[11px] text-slate-300 bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-800 cursor-pointer">
+                <input id="chk-use-share-sheet" type="checkbox" class="rounded accent-cyan-400" />
+                <span>OS共有シート経由で保存先を指定する (スマホ推奨)</span>
+            </label>
+
+            <!-- Export Buttons -->
+            <div class="space-y-2 pt-1">
+                <button id="btn-export-camm-mp4" type="button" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-98 text-xs font-extrabold text-white shadow-lg flex items-center justify-between">
+                    <span>📹 CAMM MP4動画を保存</span>
+                    <span id="camm-btn-size" class="px-2 py-0.5 rounded bg-slate-950/40 font-mono text-[11px]">0.0 MB</span>
+                </button>
+
+                <button id="btn-export-zip" type="button" class="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-98 border border-slate-600/80 text-xs font-bold text-amber-300 flex items-center justify-between">
+                    <span>📦 ZIP一括保存 (MP4 + GPX + BIN)</span>
+                    <i class="fa-solid fa-file-zipper"></i>
+                </button>
+
+                <button id="btn-export-gpx" type="button" class="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-98 border border-slate-600/80 text-xs font-bold text-emerald-300 flex items-center justify-between">
+                    <span>📄 GPX軌跡のみ保存</span>
+                    <i class="fa-solid fa-route"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const APP_VERSION = 'v2026.11.20.0835';
+
+        // Global State
         let map = null;
         let currentTileLayer = null;
         let userMarker = null;
         let userPolyline = null;
-        let watchId = null;
-        let gpsFallbackInterval = null;
-        let lastGpsFixMs = 0;
-        let wakeLock = null;
+        let cammPlaybackMarker = null;
+        let cammPlaybackPolyline = null;
+        let cammPlaybackHitPolyline = null;
 
-        // Track Style State
-        const trackStyle = {
-            color: '#ff2d55',
-            weight: 10,
-            opacity: 0.90
-        };
+        let cameraStream = null;
+        let cameraFacingMode = 'environment';
+        let isCameraVisible = true;
+        let currentLayoutMode = 'map';
+        const LAYOUT_MODES = ['map', 'split', 'camera'];
+        const LAYOUT_ICONS = { map: '🗺️', split: '🌗', camera: '📷' };
+        let isBottomCollapsed = false;
 
-        // 4-Stage Tracking Mode:
-        // 0 = "追尾: 現在地", 1 = "追尾: 読込データ", 2 = "追尾: 全体表示", 3 = "追尾: オフ"
         let trackingMode = 0;
         const TRACKING_LABELS = ['追尾: 現在地', '追尾: 読込データ', '追尾: 全体表示', '追尾: オフ'];
 
-        // UI State
-        let isBottomCollapsed = false;
-        let isCameraVisible = true;
-
-        // Recording & Telemetry State
         let isRecording = false;
         let recordStartMs = 0;
-        let elapsedTimerInterval = null;
         let recordedPoints = [];
         let totalDistanceMeters = 0;
-        let currentPosition = null;
+        let watchId = null;
+        let gpsFallbackInterval = null;
+        let lastGpsFixMs = 0;
+        let elapsedTimerInterval = null;
+        let wakeLock = null;
 
-        // Camera & MediaRecorder State
-        let cameraStream = null;
         let mediaRecorder = null;
         let recordedChunks = [];
         let recordedBytesTotal = 0;
         let recordedVideoBlob = null;
         let cachedCammResult = null;
-        let cameraFacingMode = 'environment';
-        let currentLayoutMode = 'map';
-        const LAYOUT_MODES = ['map', 'split', 'camera'];
-        const LAYOUT_ICONS = { map: '🗺️', split: '🌗', camera: '📷' };
-        const LAYOUT_LABELS = { map: '地図メイン (小窓カメラ)', split: '上下/左右 分割表示', camera: 'カメラ全画面表示' };
 
-        // CAMM Video Playback & Map Sync State
         let isCammPlaybackActive = false;
         let cammPlaybackPoints = [];
-        let cammPlaybackPolyline = null;
-        let cammPlaybackMarker = null;
         let cammVideoObjectUrl = null;
         let isScrubbingCamm = false;
+        let isDraggingPlaybackMarker = false;
         let cammPlaybackRafId = null;
 
-        // Basemap Definitions
+        let currentPosition = null;
+        const trackStyle = {
+            color: '#ff2d55',
+            weight: 10,
+            opacity: 0.9
+        };
+
         const BASEMAPS = [
             {
                 id: 'gsi_pale',
@@ -541,7 +540,7 @@
                 maxNativeZoom: 18
             },
             {
-                id: 'gsi_photo',
+                id: 'gsi_seamlessphoto',
                 name: '国土地理院 航空写真',
                 url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
                 attr: '&copy; 国土地理院',
@@ -565,7 +564,7 @@
                 id: 'opentopo',
                 name: 'OpenTopoMap (地形図)',
                 url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-                attr: '&copy; OpenTopoMap',
+                attr: '&copy; OpenTopoMap (CC-BY-SA)',
                 maxNativeZoom: 17
             },
             {
@@ -577,64 +576,14 @@
             }
         ];
 
-        // Initialization
-        function bootstrapApp() {
-            ensureLeafletLoaded(() => {
-                initMap();
-                bindUIEvents();
-                bindStyleEvents();
-                initPiPDragging();
-
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-                const shareCheckbox = document.getElementById('chk-use-share-sheet');
-                if (isIOS && typeof navigator.share === 'function' && shareCheckbox) {
-                    shareCheckbox.checked = true;
-                }
-
-                startCamera();
-                startGeolocationWatch();
-                observeBottomPanelResize();
-
-                // Re-anchor geolocation watch when returning to foreground on mobile Safari/Chrome
-                document.addEventListener('visibilitychange', () => {
-                    if (document.visibilityState === 'visible') {
-                        restartGeolocationWatch();
-                    }
-                });
-            });
-        }
-
-        if (document.readyState === 'loading') {
-            window.addEventListener('DOMContentLoaded', bootstrapApp);
-        } else {
-            bootstrapApp();
-        }
-
-        function ensureLeafletLoaded(callback) {
-            if (typeof L !== 'undefined') {
-                callback();
-                return;
-            }
-            const fallbackScript = document.createElement('script');
-            fallbackScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
-            fallbackScript.onload = () => callback();
-            document.head.appendChild(fallbackScript);
-        }
-
-        // 1. Leaflet Map Initialization
+        // 1. Map Initialization
         function initMap() {
-            if (typeof L === 'undefined') return;
             const mapEl = document.getElementById('map');
-            if (!mapEl) {
-                console.error('Map container #map not found in DOM.');
-                return;
-            }
+            if (!mapEl || typeof L === 'undefined') return;
 
-            map = L.map(mapEl, {
+            map = L.map('map', {
                 center: [37.398, 140.388],
                 zoom: 13,
-                maxZoom: 21,
                 zoomControl: false,
                 attributionControl: true
             });
@@ -646,17 +595,32 @@
                 color: trackStyle.color,
                 weight: trackStyle.weight,
                 opacity: trackStyle.opacity,
-                lineCap: 'round',
-                lineJoin: 'round'
+                lineJoin: 'round',
+                lineCap: 'round'
             }).addTo(map);
 
             cammPlaybackPolyline = L.polyline([], {
                 color: '#00d2ff',
                 weight: 8,
                 opacity: 0.85,
-                lineCap: 'round',
-                lineJoin: 'round'
+                lineJoin: 'round',
+                lineCap: 'round'
             }).addTo(map);
+
+            // Wide transparent hit-target polyline for easy tapping/clicking on mobile & desktop
+            cammPlaybackHitPolyline = L.polyline([], {
+                color: '#00d2ff',
+                weight: 28,
+                opacity: 0.01,
+                lineJoin: 'round',
+                lineCap: 'round'
+            }).addTo(map);
+
+            cammPlaybackHitPolyline.on('click', (e) => {
+                if (!isCammPlaybackActive || cammPlaybackPoints.length === 0) return;
+                L.DomEvent.stopPropagation(e);
+                seekCammToNearestLatLng(e.latlng);
+            });
         }
 
         function setBasemap(basemapId) {
@@ -745,6 +709,10 @@
             camBox.classList.remove('camera-fullscreen');
             camBox.style.left = '';
             camBox.style.top = '';
+            if (mode !== 'map') {
+                camBox.style.width = '';
+                camBox.style.height = '';
+            }
 
             if (cycleIcon) {
                 cycleIcon.textContent = LAYOUT_ICONS[mode] || '🗺️';
@@ -803,34 +771,31 @@
             if (!camBox || !header) return;
 
             let isDragging = false;
-            let startX = 0, startY = 0, initialLeft = 0, initialTop = 0;
+            let offsetX = 0, offsetY = 0;
 
             const onStart = (clientX, clientY) => {
                 if (currentLayoutMode !== 'map') return;
                 isDragging = true;
                 const rect = camBox.getBoundingClientRect();
-                startX = clientX;
-                startY = clientY;
-                initialLeft = rect.left;
-                initialTop = rect.top;
+                offsetX = clientX - rect.left;
+                offsetY = clientY - rect.top;
             };
 
             const onMove = (clientX, clientY) => {
                 if (!isDragging || currentLayoutMode !== 'map') return;
-                const dx = clientX - startX;
-                const dy = clientY - startY;
-                const maxLeft = Math.max(0, window.innerWidth - camBox.offsetWidth);
-                const maxTop = Math.max(0, window.innerHeight - camBox.offsetHeight);
-                const newLeft = Math.max(0, Math.min(maxLeft, initialLeft + dx));
-                const newTop = Math.max(0, Math.min(maxTop, initialTop + dy));
-                camBox.style.left = `${newLeft}px`;
-                camBox.style.top = `${newTop}px`;
+                const maxX = Math.max(0, window.innerWidth - camBox.offsetWidth);
+                const maxY = Math.max(0, window.innerHeight - camBox.offsetHeight);
+                const nextX = Math.max(0, Math.min(maxX, clientX - offsetX));
+                const nextY = Math.max(0, Math.min(maxY, clientY - offsetY));
+                camBox.style.left = `${Math.round(nextX)}px`;
+                camBox.style.top = `${Math.round(nextY)}px`;
             };
 
             const onEnd = () => { isDragging = false; };
 
             header.addEventListener('mousedown', (e) => {
                 if (e.target.closest('button')) return;
+                e.preventDefault();
                 onStart(e.clientX, e.clientY);
             });
             window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
@@ -840,8 +805,58 @@
                 if (e.target.closest('button') || !e.touches[0]) return;
                 onStart(e.touches[0].clientX, e.touches[0].clientY);
             }, { passive: true });
-            window.addEventListener('touchmove', (e) => {
+            header.addEventListener('touchmove', (e) => {
                 if (isDragging && e.touches[0]) onMove(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: true });
+            window.addEventListener('touchend', onEnd);
+        }
+
+        function initPiPResizing() {
+            const camBox = document.getElementById('camera-window');
+            const handle = document.getElementById('cam-resize-handle');
+            if (!camBox || !handle) return;
+
+            let isResizing = false;
+            let startX = 0, startY = 0, startW = 0, startH = 0;
+
+            const onStart = (clientX, clientY) => {
+                if (currentLayoutMode !== 'map') return;
+                isResizing = true;
+                const rect = camBox.getBoundingClientRect();
+                startX = clientX;
+                startY = clientY;
+                startW = rect.width;
+                startH = rect.height;
+            };
+
+            const onMove = (clientX, clientY) => {
+                if (!isResizing || currentLayoutMode !== 'map') return;
+                const rect = camBox.getBoundingClientRect();
+                const maxW = Math.max(130, window.innerWidth - rect.left - 8);
+                const maxH = Math.max(120, window.innerHeight - rect.top - 8);
+                const newW = Math.max(130, Math.min(maxW, startW + (clientX - startX)));
+                const newH = Math.max(120, Math.min(maxH, startH + (clientY - startY)));
+                camBox.style.width = `${Math.round(newW)}px`;
+                camBox.style.height = `${Math.round(newH)}px`;
+            };
+
+            const onEnd = () => { isResizing = false; };
+
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onStart(e.clientX, e.clientY);
+            });
+            window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
+            window.addEventListener('mouseup', onEnd);
+
+            handle.addEventListener('touchstart', (e) => {
+                if (!e.touches[0]) return;
+                e.stopPropagation();
+                onStart(e.touches[0].clientX, e.touches[0].clientY);
+            }, { passive: true });
+            window.addEventListener('touchmove', (e) => {
+                if (isResizing && e.touches[0]) onMove(e.touches[0].clientX, e.touches[0].clientY);
             }, { passive: true });
             window.addEventListener('touchend', onEnd);
         }
@@ -1372,6 +1387,9 @@
             if (cammPlaybackPolyline) {
                 cammPlaybackPolyline.setLatLngs(cammPlaybackPoints.map(p => [p.lat, p.lng]));
             }
+            if (cammPlaybackHitPolyline) {
+                cammPlaybackHitPolyline.setLatLngs(cammPlaybackPoints.map(p => [p.lat, p.lng]));
+            }
 
             if (cammPlaybackPoints.length > 0) {
                 trackingMode = 1;
@@ -1426,8 +1444,8 @@
         function updateCammPlaybackMarker(lat, lng, headingDeg = 0) {
             if (!map) return;
             const iconHtml = `
-                <div class="relative flex items-center justify-center w-8 h-8">
-                    <span class="absolute w-7 h-7 rounded-full bg-cyan-400/35 animate-ping"></span>
+                <div class="relative flex items-center justify-center w-9 h-9 cursor-grab active:cursor-grabbing">
+                    <span class="absolute w-7 h-7 rounded-full bg-cyan-400/35 animate-ping pointer-events-none"></span>
                     <div class="w-6 h-6 rounded-full bg-cyan-500 border-2 border-white shadow-lg flex items-center justify-center text-slate-950 text-[11px] font-black" style="transform: rotate(${headingDeg}deg);">
                         ▲
                     </div>
@@ -1436,15 +1454,131 @@
             const icon = L.divIcon({
                 html: iconHtml,
                 className: '',
-                iconSize: [32, 32],
-                iconAnchor: [16, 16]
+                iconSize: [36, 36],
+                iconAnchor: [18, 18]
             });
 
             if (!cammPlaybackMarker) {
-                cammPlaybackMarker = L.marker([lat, lng], { icon: icon, zIndexOffset: 500 }).addTo(map);
+                cammPlaybackMarker = L.marker([lat, lng], {
+                    icon: icon,
+                    zIndexOffset: 500,
+                    draggable: true
+                }).addTo(map);
+
+                cammPlaybackMarker.on('dragstart', () => {
+                    isDraggingPlaybackMarker = true;
+                    isScrubbingCamm = true;
+                });
+
+                cammPlaybackMarker.on('drag', (e) => {
+                    const draggedLatLng = e.target.getLatLng();
+                    seekCammToNearestLatLng(draggedLatLng, true);
+                });
+
+                cammPlaybackMarker.on('dragend', (e) => {
+                    const draggedLatLng = e.target.getLatLng();
+                    seekCammToNearestLatLng(draggedLatLng, false);
+                    isDraggingPlaybackMarker = false;
+                    isScrubbingCamm = false;
+                });
             } else {
-                cammPlaybackMarker.setLatLng([lat, lng]);
+                if (!isDraggingPlaybackMarker) {
+                    cammPlaybackMarker.setLatLng([lat, lng]);
+                }
                 cammPlaybackMarker.setIcon(icon);
+            }
+        }
+
+        function findNearestTrackRatioAndPoint(targetLatLng) {
+            const pts = cammPlaybackPoints;
+            if (!pts || pts.length === 0) return null;
+            if (pts.length === 1) {
+                return { ratio: 0, lat: pts[0].lat, lng: pts[0].lng, targetMs: pts[0].timestampOffsetMs || 0 };
+            }
+
+            const maxGpsMs = Math.max(1, pts[pts.length - 1].timestampOffsetMs || (pts.length - 1) * 1000);
+            let bestDistSq = Infinity;
+            let bestProjected = {
+                lat: pts[0].lat,
+                lng: pts[0].lng,
+                targetMs: pts[0].timestampOffsetMs || 0
+            };
+
+            const tLat = targetLatLng.lat;
+            const tLng = targetLatLng.lng;
+            const cosLat = Math.cos(tLat * Math.PI / 180);
+
+            for (let i = 0; i < pts.length - 1; i++) {
+                const p0 = pts[i];
+                const p1 = pts[i + 1];
+
+                const ax = p0.lng * cosLat;
+                const ay = p0.lat;
+                const bx = p1.lng * cosLat;
+                const by = p1.lat;
+                const px = tLng * cosLat;
+                const py = tLat;
+
+                const abx = bx - ax;
+                const aby = by - ay;
+                const abLenSq = abx * abx + aby * aby;
+
+                let segRatio = 0;
+                if (abLenSq > 0) {
+                    segRatio = ((px - ax) * abx + (py - ay) * aby) / abLenSq;
+                    segRatio = Math.max(0, Math.min(1, segRatio));
+                }
+
+                const projX = ax + abx * segRatio;
+                const projY = ay + aby * segRatio;
+                const dx = px - projX;
+                const dy = py - projY;
+                const distSq = dx * dx + dy * dy;
+
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    const t0 = p0.timestampOffsetMs || 0;
+                    const t1 = p1.timestampOffsetMs || t0;
+                    bestProjected = {
+                        lat: p0.lat + (p1.lat - p0.lat) * segRatio,
+                        lng: p0.lng + (p1.lng - p0.lng) * segRatio,
+                        targetMs: t0 + (t1 - t0) * segRatio
+                    };
+                }
+            }
+
+            const ratio = Math.max(0, Math.min(1, bestProjected.targetMs / maxGpsMs));
+            return { ratio, ...bestProjected };
+        }
+
+        function seekCammToNearestLatLng(targetLatLng, keepDraggingMarker = false) {
+            const snapped = findNearestTrackRatioAndPoint(targetLatLng);
+            if (!snapped) return;
+
+            const playVideo = document.getElementById('camm-playback-video');
+            const seekSlider = document.getElementById('slider-camm-seek');
+
+            let totalDur = (playVideo && Number.isFinite(playVideo.duration) && playVideo.duration > 0)
+                ? playVideo.duration
+                : (parseFloat(seekSlider?.max) || 0);
+
+            if (totalDur <= 0 && cammPlaybackPoints.length > 0) {
+                totalDur = Math.max(1, (cammPlaybackPoints[cammPlaybackPoints.length - 1].timestampOffsetMs || 0) / 1000);
+            }
+
+            const targetSec = snapped.ratio * totalDur;
+
+            if (playVideo && Number.isFinite(playVideo.duration) && playVideo.duration > 0) {
+                playVideo.currentTime = targetSec;
+            }
+            if (seekSlider) {
+                seekSlider.value = targetSec;
+            }
+
+            syncCammMapToTime(targetSec);
+
+            if (cammPlaybackMarker && keepDraggingMarker) {
+                cammPlaybackMarker.setLatLng([snapped.lat, snapped.lng]);
             }
         }
 
@@ -2026,6 +2160,9 @@
             if (cammPlaybackPolyline) {
                 cammPlaybackPolyline.setLatLngs([]);
             }
+            if (cammPlaybackHitPolyline) {
+                cammPlaybackHitPolyline.setLatLngs([]);
+            }
             if (cammPlaybackMarker && map) {
                 map.removeLayer(cammPlaybackMarker);
                 cammPlaybackMarker = null;
@@ -2130,15 +2267,35 @@
                 });
             }
         }
+
+        // 13. Application Bootstrap
+        function bootstrapApp() {
+            initMap();
+            renderBasemapModalList();
+            bindUIEvents();
+            bindStyleEvents();
+            initPiPDragging();
+            initPiPResizing();
+            observeBottomPanelResize();
+            startCamera();
+            startGeolocationWatch();
+            updateFooterTelemetryText();
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    restartGeolocationWatch();
+                    if (isRecording && !wakeLock) {
+                        requestScreenWakeLock();
+                    }
+                }
+            });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', bootstrapApp);
+        } else {
+            bootstrapApp();
+        }
     </script>
 </body>
 </html>
-```
-
-### 主な修正・改善内容（`v2026.11.18.2007`）
-1. **再生時の時間軸マッピング＆60fps滑らか追従の実装**:
-   - 動画の総再生時間（`video.duration`）とCAMM内のGPSタイムスタンプの比率を自動正規化し、タイムスタンプが0固定や圧縮されたデータでも全ポイント間を滑らかに補間移動するように修正しました。また再生中は `requestAnimationFrame` で地図マーカーとカメラ追尾をリアルタイム同期します。
-2. **ISO BMFF `free` ボックス格納による出力データの完全保護**:
-   - スマホの共有メニューやファイル保存時にMP4末尾の追加データが切り詰められないよう、正式なMP4ボックス（`free` アトム）形式でCAMM位置情報を埋め込む構造に強化しました。
-3. **移動距離とポイント番号の表示追加**:
-   - 読込時およびプレイヤー内に「`pt X / Y`（ポイント進行状況）」と総移動距離を表示し、静止状態のデータか移動軌跡データかを一目で判別できるようにしました。
