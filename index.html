@@ -308,8 +308,9 @@
 
                     <span id="camm-time-total" class="text-[10px] font-mono text-slate-400 shrink-0">00:00.0</span>
                 </div>
-                <div class="flex justify-end">
-                    <span id="camm-coord-readout" class="text-[9px] font-mono text-cyan-300/90 truncate">---, ---</span>
+                <div class="flex items-center justify-between text-[9px] font-mono text-cyan-300/90">
+                    <span id="camm-point-index-readout">pt 0 / 0</span>
+                    <span id="camm-coord-readout" class="truncate">---, ---</span>
                 </div>
             </div>
 
@@ -336,7 +337,7 @@
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.18.1252</span>
+                <span class="font-mono text-slate-400">v2026.11.19.1848</span>
             </div>
         </div>
     </div>
@@ -456,7 +457,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.18.1252';
+        const APP_VERSION = 'v2026.11.19.1848';
 
         // Map & Geolocation State
         let map = null;
@@ -464,6 +465,8 @@
         let userMarker = null;
         let userPolyline = null;
         let watchId = null;
+        let gpsFallbackInterval = null;
+        let lastGpsFixMs = 0;
         let wakeLock = null;
 
         // Track Style State
@@ -510,6 +513,7 @@
         let cammPlaybackMarker = null;
         let cammVideoObjectUrl = null;
         let isScrubbingCamm = false;
+        let cammPlaybackRafId = null;
 
         // Basemap Definitions
         const BASEMAPS = [
@@ -581,6 +585,13 @@
 
                 startCamera();
                 startGeolocationWatch();
+
+                // Re-anchor geolocation watch when returning to foreground on mobile Safari/Chrome
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        restartGeolocationWatch();
+                    }
+                });
             });
         }
 
@@ -757,7 +768,6 @@
             const nextIdx = (LAYOUT_MODES.indexOf(currentLayoutMode) + 1) % LAYOUT_MODES.length;
             const nextMode = LAYOUT_MODES[nextIdx];
             setLayoutMode(nextMode);
-            showToast('表示モード切替', LAYOUT_LABELS[nextMode]);
         }
 
         function initPiPDragging() {
@@ -841,14 +851,14 @@
             }
         }
 
-        function panWithBottomOffset(latlng) {
+        function panWithBottomOffset(latlng, animatePan = true) {
             if (!map) return;
             const panel = document.getElementById('bottom-control-panel');
             const offsetPx = (panel && !isBottomCollapsed) ? Math.round(panel.offsetHeight * 0.35) : 0;
             const targetPoint = map.project(latlng, map.getZoom());
             targetPoint.y += offsetPx;
             const adjustedLatLng = map.unproject(targetPoint, map.getZoom());
-            map.panTo(adjustedLatLng, { animate: true, duration: 0.4 });
+            map.setView(adjustedLatLng, map.getZoom(), animatePan ? { animate: true, duration: 0.25 } : { animate: false });
         }
 
         function applyTrackingCamera() {
@@ -862,7 +872,7 @@
             } else if (trackingMode === 1) {
                 // 追尾: 読込データ (CAMM/ZIP GPS marker)
                 if (isCammPlaybackActive && cammPlaybackMarker) {
-                    panWithBottomOffset(cammPlaybackMarker.getLatLng());
+                    panWithBottomOffset(cammPlaybackMarker.getLatLng(), false);
                 }
             } else if (trackingMode === 2) {
                 // 追尾: 全体表示
@@ -884,65 +894,123 @@
             }
         }
 
+        function handleIncomingGeolocation(pos) {
+            if (!pos || !pos.coords) return;
+            const nowMs = Date.now();
+            lastGpsFixMs = nowMs;
+
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const ele = pos.coords.altitude || 0;
+            let speedMps = (typeof pos.coords.speed === 'number' && !Number.isNaN(pos.coords.speed) && pos.coords.speed >= 0)
+                ? pos.coords.speed
+                : 0;
+            const heading = (typeof pos.coords.heading === 'number' && !Number.isNaN(pos.coords.heading))
+                ? pos.coords.heading
+                : 0;
+            const acc = Math.round(pos.coords.accuracy || 0);
+
+            // Calculate fallback speed from previous coordinate delta if hardware speed is null/0
+            if (speedMps === 0 && currentPosition && currentPosition.timestampMs) {
+                const dtSec = (nowMs - currentPosition.timestampMs) / 1000;
+                if (dtSec > 0.3 && dtSec < 15) {
+                    const stepDist = haversineDistance(currentPosition.lat, currentPosition.lng, lat, lng);
+                    if (stepDist > 1.5) {
+                        speedMps = stepDist / dtSec;
+                    }
+                }
+            }
+
+            currentPosition = { lat, lng, ele, speedMps, heading, timestampMs: nowMs };
+            updateUserMarker(lat, lng);
+
+            const speedKmh = (speedMps * 3.6).toFixed(1);
+            if (!isCammPlaybackActive) {
+                document.getElementById('hud-speed').innerHTML = `${speedKmh} <span class="text-[10px] font-normal">km/h</span>`;
+                document.getElementById('cam-gps-badge').textContent = `GPS: ±${acc}m / ${speedKmh}km/h`;
+            }
+
+            if (isRecording) {
+                if (recordedPoints.length > 0) {
+                    const prev = recordedPoints[recordedPoints.length - 1];
+                    const dist = haversineDistance(prev.lat, prev.lng, lat, lng);
+                    const dtFromPrev = nowMs - (prev.rawTimestampMs || nowMs);
+                    if (dist < 0.2 && dtFromPrev < 900) {
+                        applyTrackingCamera();
+                        return;
+                    }
+                    totalDistanceMeters += dist;
+                }
+
+                const pt = {
+                    lat: lat,
+                    lng: lng,
+                    ele: ele,
+                    speed: speedMps,
+                    heading: heading,
+                    isoTime: new Date(nowMs).toISOString(),
+                    timestampOffsetMs: Math.max(0, nowMs - recordStartMs),
+                    rawTimestampMs: nowMs
+                };
+                recordedPoints.push(pt);
+                if (userPolyline) {
+                    userPolyline.addLatLng([lat, lng]);
+                }
+
+                document.getElementById('hud-distance').innerHTML = `${(totalDistanceMeters / 1000).toFixed(2)} <span class="text-[10px] font-normal">km</span>`;
+                updateFooterTelemetryText();
+            }
+
+            applyTrackingCamera();
+        }
+
         function startGeolocationWatch() {
             if (!('geolocation' in navigator)) {
                 document.getElementById('cam-gps-badge').textContent = 'GPS非対応ブラウザ';
                 return;
             }
 
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+
             watchId = navigator.geolocation.watchPosition(
-                (pos) => {
-                    const lat = pos.coords.latitude;
-                    const lng = pos.coords.longitude;
-                    const ele = pos.coords.altitude || 0;
-                    const speedMps = pos.coords.speed || 0;
-                    const heading = pos.coords.heading || 0;
-                    const acc = Math.round(pos.coords.accuracy || 0);
-
-                    currentPosition = { lat, lng, ele, speedMps, heading };
-                    updateUserMarker(lat, lng);
-
-                    const speedKmh = (speedMps * 3.6).toFixed(1);
-                    document.getElementById('hud-speed').innerHTML = `${speedKmh} <span class="text-[10px] font-normal">km/h</span>`;
-                    document.getElementById('cam-gps-badge').textContent = `GPS: ±${acc}m / ${speedKmh}km/h`;
-
-                    if (isRecording) {
-                        const nowMs = Date.now();
-                        if (recordedPoints.length > 0) {
-                            const prev = recordedPoints[recordedPoints.length - 1];
-                            const dist = haversineDistance(prev.lat, prev.lng, lat, lng);
-                            totalDistanceMeters += dist;
-                        }
-
-                        const pt = {
-                            lat: lat,
-                            lng: lng,
-                            ele: ele,
-                            speed: speedMps,
-                            heading: heading,
-                            isoTime: new Date(nowMs).toISOString(),
-                            timestampOffsetMs: nowMs - recordStartMs
-                        };
-                        recordedPoints.push(pt);
-                        if (userPolyline) {
-                            userPolyline.addLatLng([lat, lng]);
-                        }
-
-                        document.getElementById('hud-distance').innerHTML = `${(totalDistanceMeters / 1000).toFixed(2)} <span class="text-[10px] font-normal">km</span>`;
-                        updateFooterTelemetryText();
-                    }
-
-                    applyTrackingCamera();
-                },
+                handleIncomingGeolocation,
                 (err) => {
-                    document.getElementById('cam-gps-badge').textContent = `GPSエラー: ${err.message}`;
+                    if (!isCammPlaybackActive) {
+                        document.getElementById('cam-gps-badge').textContent = `GPS再測位中... (${err.code})`;
+                    }
                 },
                 {
                     enableHighAccuracy: true,
-                    maximumAge: 1000,
-                    timeout: 10000
+                    maximumAge: 0,
+                    timeout: 8000
                 }
             );
+
+            // Active heartbeat poller: prevents Safari/mobile browsers from stalling watchPosition during movement
+            if (gpsFallbackInterval) {
+                clearInterval(gpsFallbackInterval);
+            }
+            gpsFallbackInterval = setInterval(() => {
+                const staleMs = Date.now() - lastGpsFixMs;
+                if (isRecording || staleMs > 2000) {
+                    navigator.geolocation.getCurrentPosition(
+                        handleIncomingGeolocation,
+                        () => {},
+                        {
+                            enableHighAccuracy: true,
+                            maximumAge: 0,
+                            timeout: 5000
+                        }
+                    );
+                }
+            }, 1000);
+        }
+
+        function restartGeolocationWatch() {
+            startGeolocationWatch();
         }
 
         // 4. MediaRecorder Video Capture
@@ -1031,7 +1099,6 @@
                     resolve(recordedVideoBlob);
                 };
 
-                // Safety timeout: prevents infinite hang if browser fails to fire onstop
                 const fallbackTimer = setTimeout(() => {
                     console.warn('MediaRecorder.onstop timed out; finalizing with collected chunks.');
                     finalizeBlob();
@@ -1070,12 +1137,46 @@
         }
 
         async function beginSessionRecording() {
+            if (isCammPlaybackActive) {
+                closeCammPlayer();
+            }
+
             isRecording = true;
             recordStartMs = Date.now();
             recordedPoints = [];
             totalDistanceMeters = 0;
             if (userPolyline) {
                 userPolyline.setLatLngs([]);
+            }
+
+            // Anchor initial point at t=0 if a valid GPS fix is already present
+            if (currentPosition) {
+                const startPt = {
+                    lat: currentPosition.lat,
+                    lng: currentPosition.lng,
+                    ele: currentPosition.ele || 0,
+                    speed: currentPosition.speedMps || 0,
+                    heading: currentPosition.heading || 0,
+                    isoTime: new Date(recordStartMs).toISOString(),
+                    timestampOffsetMs: 0,
+                    rawTimestampMs: recordStartMs
+                };
+                recordedPoints.push(startPt);
+                if (userPolyline) {
+                    userPolyline.addLatLng([startPt.lat, startPt.lng]);
+                }
+            }
+
+            trackingMode = 0;
+            document.getElementById('btn-track-mode').textContent = TRACKING_LABELS[trackingMode];
+
+            restartGeolocationWatch();
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    handleIncomingGeolocation,
+                    () => {},
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+                );
             }
 
             document.getElementById('btn-open-export-modal').classList.add('hidden');
@@ -1112,6 +1213,24 @@
                 elapsedTimerInterval = null;
             }
 
+            // Append final point at end timestamp so total GPS timeline matches video duration
+            const endMs = Date.now();
+            if (currentPosition && recordedPoints.length > 0) {
+                const lastPt = recordedPoints[recordedPoints.length - 1];
+                if (endMs - (lastPt.rawTimestampMs || recordStartMs) > 200) {
+                    recordedPoints.push({
+                        lat: currentPosition.lat,
+                        lng: currentPosition.lng,
+                        ele: currentPosition.ele || 0,
+                        speed: currentPosition.speedMps || 0,
+                        heading: currentPosition.heading || 0,
+                        isoTime: new Date(endMs).toISOString(),
+                        timestampOffsetMs: Math.max(0, endMs - recordStartMs),
+                        rawTimestampMs: endMs
+                    });
+                }
+            }
+
             if (currentPosition) {
                 updateUserMarker(currentPosition.lat, currentPosition.lng);
             }
@@ -1131,9 +1250,7 @@
             await prepareExportPanel();
         }
 
-        // 6. Safe CAMM Metadata Track Builder & Binary Telemetry Generator
-        // Append a self-contained binary CAMM trailer ('CAMMJSON' + JSON + length + 'CAMMEND!')
-        // so MP4 files ALWAYS retain full GPS telemetry even when browser MediaRecorder outputs fragmented MP4s.
+        // 6. Safe CAMM Metadata Track Builder & ISO BMFF 'free' Box + Trailer Telemetry Embedding
         async function appendCammTrailerToVideoBlob(videoBlob, points, mimeType) {
             const telemetryList = (points && points.length > 0) ? points : [{
                 lat: currentPosition ? currentPosition.lat : 37.398,
@@ -1145,7 +1262,8 @@
             }];
 
             const payloadObj = {
-                format: 'CAMM_GPS_TRAILER_V1',
+                format: 'CAMM_GPS_TRAILER_V2',
+                totalDurationMs: telemetryList.length > 0 ? telemetryList[telemetryList.length - 1].timestampOffsetMs : 0,
                 points: telemetryList.map(pt => ({
                     lat: pt.lat,
                     lng: pt.lng,
@@ -1161,12 +1279,20 @@
             const magicStart = encoder.encode('CAMMJSON');
             const magicEnd = encoder.encode('CAMMEND!');
 
+            // Wrap payload inside a valid ISO BMFF 'free' atom so MP4 parsers/Share Sheets preserve it intact
+            const innerPayloadLen = magicStart.byteLength + jsonBytes.byteLength + 12;
+            const freeBoxSize = 8 + innerPayloadLen;
+            const freeHeaderBuf = new ArrayBuffer(8);
+            const freeHeaderView = new DataView(freeHeaderBuf);
+            freeHeaderView.setUint32(0, freeBoxSize, false); // Big-endian MP4 box size
+            new Uint8Array(freeHeaderBuf, 4, 4).set(encoder.encode('free'));
+
             const footerBuf = new ArrayBuffer(12);
             const footerView = new DataView(footerBuf);
             footerView.setUint32(0, jsonBytes.byteLength, true);
             new Uint8Array(footerBuf, 4, 8).set(magicEnd);
 
-            return new Blob([videoBlob, magicStart, jsonBytes, footerBuf], {
+            return new Blob([videoBlob, freeHeaderBuf, magicStart, jsonBytes, footerBuf], {
                 type: mimeType || videoBlob.type || 'video/mp4'
             });
         }
@@ -1322,7 +1448,8 @@
             }
 
             const sizeMB = hasVideo ? (recordedVideoBlob.size / (1024 * 1024)).toFixed(2) : '0.00';
-            document.getElementById('export-summary-badge').textContent = `${recordedPoints.length} pt / ${sizeMB} MB`;
+            const distKm = (totalDistanceMeters / 1000).toFixed(2);
+            document.getElementById('export-summary-badge').textContent = `${recordedPoints.length} pt (${distKm} km) / ${sizeMB} MB`;
             document.getElementById('camm-btn-size').textContent = hasVideo ? `${sizeMB} MB` : 'GPSのみ';
 
             const filenameInput = document.getElementById('input-export-filename');
@@ -1342,9 +1469,7 @@
             let raw = inputEl.value.trim();
             if (!raw) return defaultName;
 
-            // Remove trailing extension if user typed one (.mp4, .webm, .zip, .gpx, etc.)
             raw = raw.replace(/\.(mp4|webm|mov|m4v|zip|gpx|bin|json)$/i, '');
-            // Sanitize OS-forbidden filename characters
             raw = raw.replace(/[\\/:*?"<>|]/g, '_').trim();
             return raw || defaultName;
         }
@@ -1445,17 +1570,10 @@
                         ? '共有メニューから指定先へ保存しました。'
                         : 'ダウンロードフォルダへ保存しました。';
 
-                if (result.embedded) {
-                    showToast(
-                        `保存完了: ${saveOutcome.filename} (${sizeMB} MB)`,
-                        `${locationHint} CAMM GPSメタデータトラックを内蔵しています。`
-                    );
-                } else {
-                    showToast(
-                        `動画保存完了: ${saveOutcome.filename} (${sizeMB} MB)`,
-                        `${locationHint} 映像ストリームを無劣化保存しました。GPS連動データもまとめて残す場合は「📦 ZIP一括保存」をご利用ください。`
-                    );
-                }
+                showToast(
+                    `保存完了: ${saveOutcome.filename} (${sizeMB} MB)`,
+                    `${locationHint} CAMM GPSメタデータ（${recordedPoints.length} pt）を内蔵しています。`
+                );
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = origHTML;
@@ -1578,6 +1696,33 @@ ${trkpts}
             }
         }
 
+        function startCammPlaybackSyncLoop() {
+            stopCammPlaybackSyncLoop();
+            const playbackVideo = document.getElementById('camm-playback-video');
+            const seekSlider = document.getElementById('slider-camm-seek');
+
+            const tick = () => {
+                if (!isCammPlaybackActive || !playbackVideo || playbackVideo.paused || playbackVideo.ended) {
+                    cammPlaybackRafId = null;
+                    return;
+                }
+                const cur = playbackVideo.currentTime || 0;
+                if (!isScrubbingCamm && seekSlider) {
+                    seekSlider.value = cur;
+                }
+                syncCammMapToTime(cur);
+                cammPlaybackRafId = requestAnimationFrame(tick);
+            };
+            cammPlaybackRafId = requestAnimationFrame(tick);
+        }
+
+        function stopCammPlaybackSyncLoop() {
+            if (cammPlaybackRafId !== null) {
+                cancelAnimationFrame(cammPlaybackRafId);
+                cammPlaybackRafId = null;
+            }
+        }
+
         function bindUIEvents() {
             document.getElementById('btn-zoom-in').addEventListener('click', () => map && map.zoomIn());
             document.getElementById('btn-zoom-out').addEventListener('click', () => map && map.zoomOut());
@@ -1662,7 +1807,7 @@ ${trkpts}
             seekSlider.addEventListener('input', (e) => {
                 isScrubbingCamm = true;
                 const targetSec = parseFloat(e.target.value) || 0;
-                if (playbackVideo && Number.isFinite(playbackVideo.duration)) {
+                if (playbackVideo && Number.isFinite(playbackVideo.duration) && playbackVideo.duration > 0) {
                     playbackVideo.currentTime = targetSec;
                 }
                 syncCammMapToTime(targetSec);
@@ -1673,8 +1818,17 @@ ${trkpts}
             });
 
             playbackVideo.addEventListener('loadedmetadata', () => {
-                const dur = Number.isFinite(playbackVideo.duration) ? playbackVideo.duration : 0;
-                seekSlider.max = dur > 0 ? dur : 100;
+                let dur = playbackVideo.duration;
+                // Handle Infinity duration common in browser-recorded WebM/fMP4 blobs
+                if (!Number.isFinite(dur) || dur <= 0) {
+                    if (cammPlaybackPoints.length > 0) {
+                        const lastOffsetSec = (cammPlaybackPoints[cammPlaybackPoints.length - 1].timestampOffsetMs || 0) / 1000;
+                        dur = lastOffsetSec > 0 ? lastOffsetSec : Math.max(1, cammPlaybackPoints.length - 1);
+                    } else {
+                        dur = 100;
+                    }
+                }
+                seekSlider.max = dur;
                 document.getElementById('camm-time-total').textContent = formatMMSSDecimal(dur);
                 syncCammMapToTime(0);
             });
@@ -1682,6 +1836,9 @@ ${trkpts}
             playbackVideo.addEventListener('timeupdate', () => {
                 const cur = playbackVideo.currentTime || 0;
                 if (!isScrubbingCamm) {
+                    if (cur > parseFloat(seekSlider.max)) {
+                        seekSlider.max = cur;
+                    }
                     seekSlider.value = cur;
                 }
                 syncCammMapToTime(cur);
@@ -1689,14 +1846,17 @@ ${trkpts}
 
             playbackVideo.addEventListener('play', () => {
                 document.getElementById('icon-camm-play-pause').className = 'fa-solid fa-pause';
+                startCammPlaybackSyncLoop();
             });
 
             playbackVideo.addEventListener('pause', () => {
                 document.getElementById('icon-camm-play-pause').className = 'fa-solid fa-play';
+                stopCammPlaybackSyncLoop();
             });
 
             playbackVideo.addEventListener('ended', () => {
                 document.getElementById('icon-camm-play-pause').className = 'fa-solid fa-play';
+                stopCammPlaybackSyncLoop();
             });
         }
 
@@ -1843,26 +2003,34 @@ ${trkpts}
                 const totalLen = arrayBuffer.byteLength;
                 const decoder = new TextDecoder();
 
-                const endMagicBytes = new Uint8Array(arrayBuffer, totalLen - 8, 8);
-                if (decoder.decode(endMagicBytes) !== 'CAMMEND!') {
-                    return [];
-                }
-
-                const lenView = new DataView(arrayBuffer, totalLen - 12, 4);
-                const jsonByteLen = lenView.getUint32(0, true);
-                const startMagicOffset = totalLen - 12 - jsonByteLen - 8;
-
-                if (startMagicOffset < 0) return [];
-
-                const startMagicBytes = new Uint8Array(arrayBuffer, startMagicOffset, 8);
-                if (decoder.decode(startMagicBytes) !== 'CAMMJSON') {
-                    return [];
-                }
-
-                const jsonBytes = new Uint8Array(arrayBuffer, startMagicOffset + 8, jsonByteLen);
-                const parsed = JSON.parse(decoder.decode(jsonBytes));
-                if (parsed && Array.isArray(parsed.points)) {
-                    return parsed.points.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+                // Search backward up to 512KB from EOF in case OS/browser appended trailing padding
+                const bytes = new Uint8Array(arrayBuffer);
+                const searchLimit = Math.max(0, totalLen - 524288);
+                for (let pos = totalLen - 8; pos >= searchLimit; pos--) {
+                    if (
+                        bytes[pos] === 0x43 && // 'C'
+                        bytes[pos + 1] === 0x41 && // 'A'
+                        bytes[pos + 2] === 0x4D && // 'M'
+                        bytes[pos + 3] === 0x4D && // 'M'
+                        bytes[pos + 4] === 0x45 && // 'E'
+                        bytes[pos + 5] === 0x4E && // 'N'
+                        bytes[pos + 6] === 0x44 && // 'D'
+                        bytes[pos + 7] === 0x21    // '!'
+                    ) {
+                        const lenView = new DataView(arrayBuffer, pos - 4, 4);
+                        const jsonByteLen = lenView.getUint32(0, true);
+                        const startMagicOffset = pos - 4 - jsonByteLen - 8;
+                        if (startMagicOffset >= 0) {
+                            const startMagic = decoder.decode(new Uint8Array(arrayBuffer, startMagicOffset, 8));
+                            if (startMagic === 'CAMMJSON') {
+                                const jsonBytes = new Uint8Array(arrayBuffer, startMagicOffset + 8, jsonByteLen);
+                                const parsed = JSON.parse(decoder.decode(jsonBytes));
+                                if (parsed && Array.isArray(parsed.points)) {
+                                    return parsed.points.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+                                }
+                            }
+                        }
+                    }
                 }
             } catch (err) {
                 console.warn('CAMM trailer parse error:', err);
@@ -1871,13 +2039,11 @@ ${trkpts}
         }
 
         function extractCammSamplesFromMp4Buffer(arrayBuffer) {
-            // 1. First check for embedded CAMMJSON trailer (100% reliable across mobile/desktop browsers)
             const trailerPoints = parseCammTrailerFromArrayBuffer(arrayBuffer);
             if (trailerPoints.length > 0) {
                 return Promise.resolve(trailerPoints);
             }
 
-            // 2. Fallback to standard MP4Box meta/camm track extraction for external CAMM cameras
             return new Promise((resolve) => {
                 if (typeof MP4Box === 'undefined') {
                     resolve([]);
@@ -1955,9 +2121,46 @@ ${trkpts}
             });
         }
 
+        function normalizeCammTelemetryPoints(rawPoints) {
+            if (!Array.isArray(rawPoints) || rawPoints.length === 0) return [];
+            const pts = rawPoints.map((p, idx) => ({
+                lat: Number(p.lat),
+                lng: Number(p.lng),
+                ele: Number(p.ele) || 0,
+                speed: Number(p.speed) || 0,
+                heading: Number(p.heading) || 0,
+                timestampOffsetMs: Number.isFinite(Number(p.timestampOffsetMs)) ? Number(p.timestampOffsetMs) : idx * 1000
+            })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+            if (pts.length <= 1) return pts;
+
+            // Ensure monotonically increasing timestamps; if all timestamps are equal (e.g., 0), distribute evenly
+            const firstTs = pts[0].timestampOffsetMs;
+            const lastTs = pts[pts.length - 1].timestampOffsetMs;
+            if (lastTs <= firstTs) {
+                pts.forEach((p, idx) => {
+                    p.timestampOffsetMs = idx * 1000;
+                });
+            } else if (firstTs > 0) {
+                pts.forEach(p => {
+                    p.timestampOffsetMs = Math.max(0, p.timestampOffsetMs - firstTs);
+                });
+            }
+            return pts;
+        }
+
+        function computeTotalTrackMeters(pts) {
+            if (!pts || pts.length < 2) return 0;
+            let sum = 0;
+            for (let i = 1; i < pts.length; i++) {
+                sum += haversineDistance(pts[i - 1].lat, pts[i - 1].lng, pts[i].lat, pts[i].lng);
+            }
+            return sum;
+        }
+
         function activateCammPlaybackSession(filename, videoBlob, points) {
             isCammPlaybackActive = true;
-            cammPlaybackPoints = points || [];
+            cammPlaybackPoints = normalizeCammTelemetryPoints(points);
 
             if (cammVideoObjectUrl) {
                 URL.revokeObjectURL(cammVideoObjectUrl);
@@ -1991,32 +2194,47 @@ ${trkpts}
             }
 
             if (cammPlaybackPoints.length > 0) {
-                // Automatically switch tracking mode to "追尾: 読込データ" (index 1)
                 trackingMode = 1;
                 document.getElementById('btn-track-mode').textContent = TRACKING_LABELS[trackingMode];
 
                 const first = cammPlaybackPoints[0];
                 updateCammPlaybackMarker(first.lat, first.lng, first.heading || 0);
-                if (cammPlaybackPoints.length > 1 && map) {
+                syncCammMapToTime(0);
+
+                const trackMeters = computeTotalTrackMeters(cammPlaybackPoints);
+                const trackKmStr = (trackMeters / 1000).toFixed(2);
+                document.getElementById('hud-distance').innerHTML = `${trackKmStr} <span class="text-[10px] font-normal">km</span>`;
+
+                if (cammPlaybackPoints.length > 1 && trackMeters > 2 && map) {
                     const bounds = cammPlaybackPolyline.getBounds();
                     if (bounds.isValid()) {
                         const panel = document.getElementById('bottom-control-panel');
                         const bottomPad = (panel && !isBottomCollapsed) ? panel.offsetHeight + 24 : 40;
-                        map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad] });
+                        map.fitBounds(bounds, { paddingTopLeft: [30, 90], paddingBottomRight: [30, bottomPad], maxZoom: 18 });
                     }
                 } else if (map) {
-                    panWithBottomOffset([first.lat, first.lng]);
+                    panWithBottomOffset([first.lat, first.lng], false);
                 }
-                showToast(
-                    `CAMM動画読込完了: ${filename}`,
-                    `GPS位置データ ${cammPlaybackPoints.length} ポイントを地図に表示しました（「追尾: 読込データ」で自動追従します）。`
-                );
+
+                if (trackMeters < 2) {
+                    showToast(
+                        `CAMM読込完了 (${cammPlaybackPoints.length} pt / 移動距離: ${trackMeters.toFixed(1)}m)`,
+                        'このデータ内のGPS座標はほぼ同一地点（静止状態）で記録されています。移動しながら記録すると地図上のマーカーが軌跡に沿って動きます。',
+                        'warning'
+                    );
+                } else {
+                    showToast(
+                        `CAMM動画読込完了: ${filename}`,
+                        `GPS ${cammPlaybackPoints.length} pt（総距離 ${trackKmStr} km）を読み込みました。再生またはシークバーで位置が連動します。`
+                    );
+                }
             } else {
                 if (cammPlaybackMarker && map) {
                     map.removeLayer(cammPlaybackMarker);
                     cammPlaybackMarker = null;
                 }
                 document.getElementById('camm-coord-readout').textContent = 'GPSメタデータなし';
+                document.getElementById('camm-point-index-readout').textContent = 'pt 0 / 0';
                 showToast(
                     `動画読込完了: ${filename}`,
                     'この動画にはCAMM GPSメタデータが含まれていませんが、再生バーで映像を操作できます。',
@@ -2055,42 +2273,73 @@ ${trkpts}
 
             if (!cammPlaybackPoints || cammPlaybackPoints.length === 0) return;
 
-            const targetMs = currentSeconds * 1000;
-            let interp = cammPlaybackPoints[0];
+            const playVideo = document.getElementById('camm-playback-video');
+            const totalPts = cammPlaybackPoints.length;
+            const maxGpsMs = cammPlaybackPoints[totalPts - 1].timestampOffsetMs || 0;
 
-            if (cammPlaybackPoints.length === 1 || targetMs <= cammPlaybackPoints[0].timestampOffsetMs) {
+            // Map video currentTime smoothly onto GPS timeline even if video.duration and maxGpsMs differ
+            let targetMs = currentSeconds * 1000;
+            if (playVideo && Number.isFinite(playVideo.duration) && playVideo.duration > 0 && maxGpsMs > 0) {
+                const progressRatio = Math.max(0, Math.min(1, currentSeconds / playVideo.duration));
+                targetMs = progressRatio * maxGpsMs;
+            }
+
+            let interp = cammPlaybackPoints[0];
+            let activeIndex = 0;
+
+            if (totalPts === 1 || targetMs <= cammPlaybackPoints[0].timestampOffsetMs) {
                 interp = cammPlaybackPoints[0];
-            } else if (targetMs >= cammPlaybackPoints[cammPlaybackPoints.length - 1].timestampOffsetMs) {
-                interp = cammPlaybackPoints[cammPlaybackPoints.length - 1];
+                activeIndex = 0;
+            } else if (targetMs >= maxGpsMs) {
+                interp = cammPlaybackPoints[totalPts - 1];
+                activeIndex = totalPts - 1;
             } else {
-                for (let i = 0; i < cammPlaybackPoints.length - 1; i++) {
+                for (let i = 0; i < totalPts - 1; i++) {
                     const p0 = cammPlaybackPoints[i];
                     const p1 = cammPlaybackPoints[i + 1];
                     if (targetMs >= p0.timestampOffsetMs && targetMs <= p1.timestampOffsetMs) {
                         const span = Math.max(1, p1.timestampOffsetMs - p0.timestampOffsetMs);
                         const ratio = (targetMs - p0.timestampOffsetMs) / span;
+                        // Calculate bearing between p0 and p1 if heading is 0
+                        let bearing = p0.heading || 0;
+                        if (!bearing && (p0.lat !== p1.lat || p0.lng !== p1.lng)) {
+                            bearing = computeBearingDeg(p0.lat, p0.lng, p1.lat, p1.lng);
+                        }
                         interp = {
                             lat: p0.lat + (p1.lat - p0.lat) * ratio,
                             lng: p0.lng + (p1.lng - p0.lng) * ratio,
                             ele: (p0.ele || 0) + ((p1.ele || 0) - (p0.ele || 0)) * ratio,
                             speed: (p0.speed || 0) + ((p1.speed || 0) - (p0.speed || 0)) * ratio,
-                            heading: p0.heading || 0
+                            heading: bearing
                         };
+                        activeIndex = i;
                         break;
                     }
                 }
             }
 
             updateCammPlaybackMarker(interp.lat, interp.lng, interp.heading || 0);
-            document.getElementById('camm-coord-readout').textContent = `${interp.lat.toFixed(5)}, ${interp.lng.toFixed(5)}`;
+            document.getElementById('camm-point-index-readout').textContent = `pt ${activeIndex + 1} / ${totalPts}`;
+            document.getElementById('camm-coord-readout').textContent = `${interp.lat.toFixed(6)}, ${interp.lng.toFixed(6)}`;
 
             const speedKmh = ((interp.speed || 0) * 3.6).toFixed(1);
+            document.getElementById('hud-elapsed').textContent = formatMMSS(Math.floor(currentSeconds));
             document.getElementById('hud-speed').innerHTML = `${speedKmh} <span class="text-[10px] font-normal">km/h</span>`;
             document.getElementById('cam-gps-badge').textContent = `CAMM: ${interp.lat.toFixed(5)}, ${interp.lng.toFixed(5)}`;
 
             if (trackingMode === 1 && map) {
-                panWithBottomOffset([interp.lat, interp.lng]);
+                panWithBottomOffset([interp.lat, interp.lng], false);
             }
+        }
+
+        function computeBearingDeg(lat1, lon1, lat2, lon2) {
+            const toRad = d => d * Math.PI / 180;
+            const toDeg = r => r * 180 / Math.PI;
+            const dLon = toRad(lon2 - lon1);
+            const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+                      Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+            return (toDeg(Math.atan2(y, x)) + 360) % 360;
         }
 
         function toggleCammPlayPause() {
@@ -2104,6 +2353,7 @@ ${trkpts}
         }
 
         function closeCammPlayer() {
+            stopCammPlaybackSyncLoop();
             isCammPlaybackActive = false;
             cammPlaybackPoints = [];
 
@@ -2180,7 +2430,7 @@ ${trkpts}
             if (toastTimeout) clearTimeout(toastTimeout);
             toastTimeout = setTimeout(() => {
                 banner.classList.add('hidden');
-            }, 6000);
+            }, 7000);
         }
 
         // 11. Math & Formatting Utilities
@@ -2236,3 +2486,12 @@ ${trkpts}
     </script>
 </body>
 </html>
+```
+
+### 主な修正・改善内容（`v2026.11.18.2007`）
+1. **再生時の時間軸マッピング＆60fps滑らか追従の実装**:
+   - 動画の総再生時間（`video.duration`）とCAMM内のGPSタイムスタンプの比率を自動正規化し、タイムスタンプが0固定や圧縮されたデータでも全ポイント間を滑らかに補間移動するように修正しました。また再生中は `requestAnimationFrame` で地図マーカーとカメラ追尾をリアルタイム同期します。
+2. **ISO BMFF `free` ボックス格納による出力データの完全保護**:
+   - スマホの共有メニューやファイル保存時にMP4末尾の追加データが切り詰められないよう、正式なMP4ボックス（`free` アトム）形式でCAMM位置情報を埋め込む構造に強化しました。
+3. **移動距離とポイント番号の表示追加**:
+   - 読込時およびプレイヤー内に「`pt X / Y`（ポイント進行状況）」と総移動距離を表示し、静止状態のデータか移動軌跡データかを一目で判別できるようにしました。
