@@ -371,7 +371,7 @@
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.20.1847</span>
+                <span class="font-mono text-slate-400">v2026.11.20.1915</span>
             </div>
         </div>
     </div>
@@ -472,7 +472,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.20.1847';
+        const APP_VERSION = 'v2026.11.20.1915';
 
         // Global State
         let map = null;
@@ -1207,10 +1207,9 @@
                 const totalLen = arrayBuffer.byteLength;
                 const decoder = new TextDecoder();
 
-                // Search backward up to 2MB from EOF in case OS/browser appended trailing padding
+                // Scan entire buffer backward for 'CAMMEND!' (covers both EOF trailer and moov/udta embedded payload)
                 const bytes = new Uint8Array(arrayBuffer);
-                const searchLimit = Math.max(0, totalLen - 2097152);
-                for (let pos = totalLen - 8; pos >= searchLimit; pos--) {
+                for (let pos = totalLen - 8; pos >= 12; pos--) {
                     if (
                         bytes[pos] === 0x43 && // 'C'
                         bytes[pos + 1] === 0x41 && // 'A'
@@ -1237,7 +1236,7 @@
                     }
                 }
             } catch (err) {
-                console.warn('CAMM trailer parse error:', err);
+                console.warn('CAMM trailer/udta parse error:', err);
             }
             return [];
         }
@@ -2296,11 +2295,245 @@
             return buf;
         }
 
+        function createCammSamplePacket(p) {
+            // Standard 34-byte Little-Endian CAMM Type 5 (GPS) sample payload
+            const buf = new ArrayBuffer(34);
+            const dv = new DataView(buf);
+            dv.setUint16(0, 5, true);
+            dv.setFloat64(2, p.lat, true);
+            dv.setFloat64(10, p.lng, true);
+            dv.setFloat64(18, p.ele || 0, true);
+            dv.setFloat32(26, p.speed || 0, true);
+            dv.setFloat32(30, p.heading || 0, true);
+            return new Uint8Array(buf);
+        }
+
+        function injectUdtaBoxIntoIsoBmff(mp4Buffer, udtaPayloadBytes) {
+            // Wraps payload inside an ISO-standard 'camm' atom inside 'moov/udta' (survives OS media handlers)
+            try {
+                const view = new DataView(mp4Buffer);
+                const bytes = new Uint8Array(mp4Buffer);
+                const len = mp4Buffer.byteLength;
+                const decoder = new TextDecoder();
+
+                const cammSubBoxSize = 8 + udtaPayloadBytes.byteLength;
+                const cammSubBox = new Uint8Array(cammSubBoxSize);
+                const subView = new DataView(cammSubBox.buffer);
+                subView.setUint32(0, cammSubBoxSize, false);
+                cammSubBox.set([0x63, 0x61, 0x6D, 0x6D], 4); // 'camm'
+                cammSubBox.set(udtaPayloadBytes, 8);
+
+                let pos = 0;
+                let moovStart = -1;
+                let moovSize = 0;
+                const topBoxes = [];
+
+                while (pos + 8 <= len) {
+                    const size = view.getUint32(pos, false);
+                    const type = decoder.decode(bytes.subarray(pos + 4, pos + 8));
+                    if (size < 8 || pos + size > len) break;
+                    topBoxes.push({ type, start: pos, size });
+                    if (type === 'moov') {
+                        moovStart = pos;
+                        moovSize = size;
+                    }
+                    pos += size;
+                }
+
+                if (moovStart === -1) return null;
+
+                // Scan inside moov for existing 'udta' box
+                let moovInnerPos = moovStart + 8;
+                const moovEnd = moovStart + moovSize;
+                let existingUdta = null;
+
+                while (moovInnerPos + 8 <= moovEnd) {
+                    const subSize = view.getUint32(moovInnerPos, false);
+                    const subType = decoder.decode(bytes.subarray(moovInnerPos + 4, moovInnerPos + 8));
+                    if (subSize < 8 || moovInnerPos + subSize > moovEnd) break;
+                    if (subType === 'udta') {
+                        existingUdta = { start: moovInnerPos, size: subSize };
+                        break;
+                    }
+                    moovInnerPos += subSize;
+                }
+
+                const addedBytesLen = existingUdta ? cammSubBoxSize : (8 + cammSubBoxSize);
+                const out = new Uint8Array(len + addedBytesLen);
+                const outView = new DataView(out.buffer);
+
+                if (existingUdta) {
+                    // Insert cammSubBox at the end of existing udta and update moov + udta sizes
+                    const insertPos = existingUdta.start + existingUdta.size;
+                    out.set(bytes.subarray(0, insertPos), 0);
+                    out.set(cammSubBox, insertPos);
+                    out.set(bytes.subarray(insertPos), insertPos + cammSubBoxSize);
+
+                    outView.setUint32(moovStart, moovSize + cammSubBoxSize, false);
+                    outView.setUint32(existingUdta.start, existingUdta.size + cammSubBoxSize, false);
+                } else {
+                    // Create new 'udta' box at the end of 'moov'
+                    const newUdtaSize = 8 + cammSubBoxSize;
+                    const newUdta = new Uint8Array(newUdtaSize);
+                    const udtaView = new DataView(newUdta.buffer);
+                    udtaView.setUint32(0, newUdtaSize, false);
+                    newUdta.set([0x75, 0x64, 0x74, 0x61], 4); // 'udta'
+                    newUdta.set(cammSubBox, 8);
+
+                    out.set(bytes.subarray(0, moovEnd), 0);
+                    out.set(newUdta, moovEnd);
+                    out.set(bytes.subarray(moovEnd), moovEnd + newUdtaSize);
+
+                    outView.setUint32(moovStart, moovSize + newUdtaSize, false);
+                }
+
+                // Shift stco/co64 chunk offsets if moov preceded mdat
+                const mdatBox = topBoxes.find(b => b.type === 'mdat');
+                if (mdatBox && moovStart < mdatBox.start) {
+                    shiftChunkOffsetsInMoov(out.buffer, moovStart, moovSize + addedBytesLen, addedBytesLen);
+                }
+
+                return out.buffer;
+            } catch (err) {
+                console.warn('moov/udta injection fallback:', err);
+                return null;
+            }
+        }
+
+        function shiftChunkOffsetsInMoov(buffer, moovStart, moovSize, deltaBytes) {
+            const view = new DataView(buffer);
+            const bytes = new Uint8Array(buffer);
+            const decoder = new TextDecoder();
+
+            function walk(start, end) {
+                let pos = start;
+                while (pos + 8 <= end) {
+                    const size = view.getUint32(pos, false);
+                    const type = decoder.decode(bytes.subarray(pos + 4, pos + 8));
+                    if (size < 8 || pos + size > end) break;
+                    if (['trak', 'mdia', 'minf', 'stbl'].includes(type)) {
+                        walk(pos + 8, pos + size);
+                    } else if (type === 'stco' && pos + 16 <= pos + size) {
+                        const count = view.getUint32(pos + 12, false);
+                        for (let i = 0; i < count; i++) {
+                            const offPos = pos + 16 + i * 4;
+                            if (offPos + 4 <= pos + size) {
+                                view.setUint32(offPos, view.getUint32(offPos, false) + deltaBytes, false);
+                            }
+                        }
+                    } else if (type === 'co64' && pos + 16 <= pos + size) {
+                        const count = view.getUint32(pos + 12, false);
+                        for (let i = 0; i < count; i++) {
+                            const offPos = pos + 16 + i * 8;
+                            if (offPos + 8 <= pos + size) {
+                                const hi = view.getUint32(offPos, false);
+                                const lo = view.getUint32(offPos + 4, false);
+                                const nextVal = hi * 4294967296 + lo + deltaBytes;
+                                view.setUint32(offPos, Math.floor(nextVal / 4294967296), false);
+                                view.setUint32(offPos + 4, nextVal >>> 0, false);
+                            }
+                        }
+                    }
+                    pos += size;
+                }
+            }
+            walk(moovStart + 8, moovStart + moovSize);
+        }
+
+        function muxOfficialCammTrackWithMp4Box(rawMp4Buffer, points) {
+            return new Promise((resolve) => {
+                if (typeof MP4Box === 'undefined' || !rawMp4Buffer || rawMp4Buffer.byteLength < 128 || points.length === 0) {
+                    resolve(null);
+                    return;
+                }
+                let settled = false;
+                const finish = (res) => {
+                    if (settled) return;
+                    settled = true;
+                    resolve(res);
+                };
+                const timer = setTimeout(() => finish(null), 1500);
+
+                try {
+                    const inFile = MP4Box.createFile();
+                    inFile.onReady = (info) => {
+                        const vTrack = info.videoTracks && info.videoTracks[0];
+                        if (!vTrack || !vTrack.avcDecoderConfigRecord) {
+                            clearTimeout(timer);
+                            finish(null);
+                            return;
+                        }
+                        const outFile = MP4Box.createFile();
+                        const outVideoId = outFile.addTrack({
+                            type: 'vide',
+                            width: vTrack.video.width,
+                            height: vTrack.video.height,
+                            timescale: vTrack.timescale,
+                            avcDecoderConfigRecord: vTrack.avcDecoderConfigRecord
+                        });
+                        const outCammId = outFile.addTrack({
+                            type: 'meta',
+                            subtype: 'camm',
+                            timescale: 1000
+                        });
+
+                        inFile.setExtractionOptions(vTrack.id, null, { nbSamples: 100000 });
+                        inFile.onSamples = (id, user, samples) => {
+                            if (id !== vTrack.id) return;
+                            for (const s of samples) {
+                                outFile.addSample(outVideoId, s.data, {
+                                    duration: s.duration,
+                                    dts: s.dts,
+                                    cts: s.cts,
+                                    is_sync: s.is_sync
+                                });
+                            }
+                        };
+                        inFile.start();
+
+                        points.forEach((p, idx) => {
+                            const nextTs = (idx + 1 < points.length)
+                                ? Math.max(1, (points[idx + 1].timestampOffsetMs || 0) - (p.timestampOffsetMs || 0))
+                                : 1000;
+                            outFile.addSample(outCammId, createCammSamplePacket(p), {
+                                duration: nextTs,
+                                dts: p.timestampOffsetMs || idx * 1000,
+                                cts: p.timestampOffsetMs || idx * 1000,
+                                is_sync: true
+                            });
+                        });
+
+                        const muxedBuf = outFile.getBuffer();
+                        clearTimeout(timer);
+                        if (muxedBuf && muxedBuf.byteLength > rawMp4Buffer.byteLength * 0.4) {
+                            finish(muxedBuf);
+                        } else {
+                            finish(null);
+                        }
+                    };
+                    inFile.onError = () => {
+                        clearTimeout(timer);
+                        finish(null);
+                    };
+
+                    const copy = rawMp4Buffer.slice(0);
+                    copy.fileStart = 0;
+                    inFile.appendBuffer(copy);
+                    inFile.flush();
+                } catch (err) {
+                    clearTimeout(timer);
+                    finish(null);
+                }
+            });
+        }
+
         async function buildCammEmbeddedVideoBlob() {
             if (cachedCammResult) return cachedCammResult;
 
             const baseBlob = recordedVideoBlob || new Blob([], { type: 'video/mp4' });
-            const rawBuf = await baseBlob.arrayBuffer();
+            let workingBuf = await baseBlob.arrayBuffer();
+            const isWebm = (baseBlob.type || '').toLowerCase().includes('webm');
+
             const payloadObj = {
                 version: APP_VERSION,
                 createdAt: new Date().toISOString(),
@@ -2309,27 +2542,40 @@
             const encoder = new TextEncoder();
             const jsonBytes = encoder.encode(JSON.stringify(payloadObj));
 
-            // Build ISO BMFF 'free' box + trailing 'CAMMJSON...CAMMEND!' marker
+            // Construct self-describing CAMMJSON payload block
             const innerSize = 8 + jsonBytes.byteLength + 4 + 8;
+            const cammPayloadBlock = new Uint8Array(innerSize);
+            const blockView = new DataView(cammPayloadBlock.buffer);
+            cammPayloadBlock.set(encoder.encode('CAMMJSON'), 0);
+            cammPayloadBlock.set(jsonBytes, 8);
+            blockView.setUint32(8 + jsonBytes.byteLength, jsonBytes.byteLength, true);
+            cammPayloadBlock.set(encoder.encode('CAMMEND!'), 8 + jsonBytes.byteLength + 4);
+
+            if (!isWebm && workingBuf.byteLength > 128) {
+                // 1. Attempt official MP4Box.js meta/camm track muxing
+                const officialCammBuf = await muxOfficialCammTrackWithMp4Box(workingBuf, recordedPoints);
+                if (officialCammBuf) {
+                    workingBuf = officialCammBuf;
+                }
+
+                // 2. Embed inside ISO-standard 'moov/udta/camm' atom so metadata stays inside moov header
+                const udtaInjectedBuf = injectUdtaBoxIntoIsoBmff(workingBuf, cammPayloadBlock);
+                if (udtaInjectedBuf) {
+                    workingBuf = udtaInjectedBuf;
+                }
+            }
+
+            // 3. Also append 'free' box trailer as universal fallback for direct file loading
             const freeBoxSize = 8 + innerSize;
-            const combined = new Uint8Array(rawBuf.byteLength + freeBoxSize);
-            combined.set(new Uint8Array(rawBuf), 0);
+            const combined = new Uint8Array(workingBuf.byteLength + freeBoxSize);
+            combined.set(new Uint8Array(workingBuf), 0);
 
-            let offset = rawBuf.byteLength;
-            const view = new DataView(combined.buffer);
-            view.setUint32(offset, freeBoxSize, false);
-            combined.set([0x66, 0x72, 0x65, 0x65], offset + 4); // 'free'
-            offset += 8;
+            const trailerOffset = workingBuf.byteLength;
+            const trailerView = new DataView(combined.buffer);
+            trailerView.setUint32(trailerOffset, freeBoxSize, false);
+            combined.set([0x66, 0x72, 0x65, 0x65], trailerOffset + 4); // 'free'
+            combined.set(cammPayloadBlock, trailerOffset + 8);
 
-            combined.set(encoder.encode('CAMMJSON'), offset);
-            offset += 8;
-            combined.set(jsonBytes, offset);
-            offset += jsonBytes.byteLength;
-            view.setUint32(offset, jsonBytes.byteLength, true);
-            offset += 4;
-            combined.set(encoder.encode('CAMMEND!'), offset);
-
-            const isWebm = (baseBlob.type || '').toLowerCase().includes('webm');
             const ext = isWebm ? 'webm' : 'mp4';
             const finalBlob = new Blob([combined], { type: baseBlob.type || 'video/mp4' });
             cachedCammResult = { blob: finalBlob, ext };
