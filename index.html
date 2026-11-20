@@ -371,7 +371,7 @@
             <!-- Footer Status & Version -->
             <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
                 <span id="wake-lock-indicator">WakeLock: 待機中 / GPS: 0 pt</span>
-                <span class="font-mono text-slate-400">v2026.11.20.0841</span>
+                <span class="font-mono text-slate-400">v2026.11.20.1847</span>
             </div>
         </div>
     </div>
@@ -472,7 +472,7 @@
     </div>
 
     <script>
-        const APP_VERSION = 'v2026.11.20.0841';
+        const APP_VERSION = 'v2026.11.20.1847';
 
         // Global State
         let map = null;
@@ -1207,9 +1207,9 @@
                 const totalLen = arrayBuffer.byteLength;
                 const decoder = new TextDecoder();
 
-                // Search backward up to 512KB from EOF in case OS/browser appended trailing padding
+                // Search backward up to 2MB from EOF in case OS/browser appended trailing padding
                 const bytes = new Uint8Array(arrayBuffer);
-                const searchLimit = Math.max(0, totalLen - 524288);
+                const searchLimit = Math.max(0, totalLen - 2097152);
                 for (let pos = totalLen - 8; pos >= searchLimit; pos--) {
                     if (
                         bytes[pos] === 0x43 && // 'C'
@@ -1242,15 +1242,251 @@
             return [];
         }
 
+        function decodeCammSamplePayload(view, byteOffset, byteLength, fallbackTimestampMs) {
+            if (!view || byteLength < 26) return null;
+            const packetType = view.getUint16(byteOffset + 0, true);
+
+            // CAMM Type 5 (Standard GPS: uint16 type=5, float64 lat, float64 lng, float64 ele, [float32 speed, float32 heading])
+            if (packetType === 5 && byteLength >= 26) {
+                const lat = view.getFloat64(byteOffset + 2, true);
+                const lng = view.getFloat64(byteOffset + 10, true);
+                const ele = view.getFloat64(byteOffset + 18, true);
+                const speed = byteLength >= 30 ? view.getFloat32(byteOffset + 26, true) : 0;
+                const heading = byteLength >= 34 ? view.getFloat32(byteOffset + 30, true) : 0;
+
+                if (
+                    Number.isFinite(lat) && Number.isFinite(lng) &&
+                    Math.abs(lat) <= 90 && Math.abs(lng) <= 180 &&
+                    !(Math.abs(lat) < 1e-6 && Math.abs(lng) < 1e-6)
+                ) {
+                    return {
+                        lat,
+                        lng,
+                        ele: Number.isFinite(ele) ? ele : 0,
+                        speed: Number.isFinite(speed) ? speed : 0,
+                        heading: Number.isFinite(heading) ? heading : 0,
+                        timestampOffsetMs: fallbackTimestampMs
+                    };
+                }
+            }
+
+            // CAMM Type 6 (Google Street View Extended GPS: uint16 type=6, float64 time_gps_epoch, int32 gps_fix_type, float64 lat, float64 lng, float32 alt, ...)
+            if (packetType === 6 && byteLength >= 34) {
+                const gpsEpochSec = view.getFloat64(byteOffset + 2, true);
+                const lat = view.getFloat64(byteOffset + 14, true);
+                const lng = view.getFloat64(byteOffset + 22, true);
+                const ele = byteLength >= 34 ? view.getFloat32(byteOffset + 30, true) : 0;
+                const vNorth = byteLength >= 46 ? view.getFloat32(byteOffset + 42, true) : 0;
+                const vEast = byteLength >= 50 ? view.getFloat32(byteOffset + 46, true) : 0;
+                const speed = Math.hypot(Number.isFinite(vNorth) ? vNorth : 0, Number.isFinite(vEast) ? vEast : 0);
+
+                if (
+                    Number.isFinite(lat) && Number.isFinite(lng) &&
+                    Math.abs(lat) <= 90 && Math.abs(lng) <= 180 &&
+                    !(Math.abs(lat) < 1e-6 && Math.abs(lng) < 1e-6)
+                ) {
+                    return {
+                        lat,
+                        lng,
+                        ele: Number.isFinite(ele) ? ele : 0,
+                        speed,
+                        heading: 0,
+                        timestampOffsetMs: fallbackTimestampMs,
+                        _gpsEpochSec: Number.isFinite(gpsEpochSec) ? gpsEpochSec : null
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        function scanRawIsoBmffForCammPackets(arrayBuffer) {
+            // Fallback binary parser that reads stts/stsz/stco/co64 sample tables directly if MP4Box misses non-standard meta tracks
+            try {
+                const view = new DataView(arrayBuffer);
+                const bytes = new Uint8Array(arrayBuffer);
+                const len = arrayBuffer.byteLength;
+                const decoder = new TextDecoder();
+
+                // Locate 'camm' sample entry inside stsd to confirm track presence and extract sample sizes/offsets
+                let cammFound = false;
+                for (let i = 0; i < len - 8; i++) {
+                    if (bytes[i] === 0x63 && bytes[i + 1] === 0x61 && bytes[i + 2] === 0x6D && bytes[i + 3] === 0x6D) { // 'camm'
+                        cammFound = true;
+                        break;
+                    }
+                }
+                if (!cammFound) return [];
+
+                // Parse moov -> trak -> mdia -> minf -> stbl boxes to find the track containing 'camm'
+                function findBoxes(start, end) {
+                    const list = [];
+                    let pos = start;
+                    while (pos + 8 <= end) {
+                        let size = view.getUint32(pos, false);
+                        const type = decoder.decode(bytes.subarray(pos + 4, pos + 8));
+                        let headerSize = 8;
+                        if (size === 1) {
+                            if (pos + 16 > end) break;
+                            const hi = view.getUint32(pos + 8, false);
+                            const lo = view.getUint32(pos + 12, false);
+                            size = hi * 4294967296 + lo;
+                            headerSize = 16;
+                        } else if (size === 0) {
+                            size = end - pos;
+                        }
+                        if (size < headerSize || pos + size > end) break;
+                        list.push({ type, start: pos, dataStart: pos + headerSize, end: pos + size });
+                        pos += size;
+                    }
+                    return list;
+                }
+
+                const topBoxes = findBoxes(0, len);
+                const moov = topBoxes.find(b => b.type === 'moov');
+                if (!moov) return [];
+
+                const traks = findBoxes(moov.dataStart, moov.end).filter(b => b.type === 'trak');
+                for (const trak of traks) {
+                    const mdia = findBoxes(trak.dataStart, trak.end).find(b => b.type === 'mdia');
+                    if (!mdia) continue;
+                    const mdiaChildren = findBoxes(mdia.dataStart, mdia.end);
+                    const mdhd = mdiaChildren.find(b => b.type === 'mdhd');
+                    const minf = mdiaChildren.find(b => b.type === 'minf');
+                    if (!minf) continue;
+
+                    let timescale = 1000;
+                    if (mdhd && mdhd.dataStart + 20 <= mdhd.end) {
+                        const ver = bytes[mdhd.dataStart];
+                        timescale = ver === 1
+                            ? view.getUint32(mdhd.dataStart + 20, false)
+                            : view.getUint32(mdhd.dataStart + 12, false);
+                        if (!timescale) timescale = 1000;
+                    }
+
+                    const stbl = findBoxes(minf.dataStart, minf.end).find(b => b.type === 'stbl');
+                    if (!stbl) continue;
+                    const stblBoxes = findBoxes(stbl.dataStart, stbl.end);
+                    const stsd = stblBoxes.find(b => b.type === 'stsd');
+                    if (!stsd) continue;
+
+                    const stsdText = decoder.decode(bytes.subarray(stsd.dataStart, stsd.end));
+                    if (!stsdText.includes('camm')) continue;
+
+                    // Extract stsz (sample sizes), stco/co64 (chunk offsets), stsc (sample-to-chunk), stts (durations)
+                    const stsz = stblBoxes.find(b => b.type === 'stsz');
+                    const stco = stblBoxes.find(b => b.type === 'stco');
+                    const co64 = stblBoxes.find(b => b.type === 'co64');
+                    const stsc = stblBoxes.find(b => b.type === 'stsc');
+                    const stts = stblBoxes.find(b => b.type === 'stts');
+                    if (!stsz || (!stco && !co64) || !stsc) continue;
+
+                    const defaultSampleSize = view.getUint32(stsz.dataStart + 4, false);
+                    const sampleCount = view.getUint32(stsz.dataStart + 8, false);
+                    const sampleSizes = new Array(sampleCount);
+                    for (let i = 0; i < sampleCount; i++) {
+                        sampleSizes[i] = defaultSampleSize > 0
+                            ? defaultSampleSize
+                            : view.getUint32(stsz.dataStart + 12 + i * 4, false);
+                    }
+
+                    const chunkOffsets = [];
+                    if (stco) {
+                        const chunkCount = view.getUint32(stco.dataStart + 4, false);
+                        for (let i = 0; i < chunkCount; i++) {
+                            chunkOffsets.push(view.getUint32(stco.dataStart + 8 + i * 4, false));
+                        }
+                    } else if (co64) {
+                        const chunkCount = view.getUint32(co64.dataStart + 4, false);
+                        for (let i = 0; i < chunkCount; i++) {
+                            const hi = view.getUint32(co64.dataStart + 8 + i * 8, false);
+                            const lo = view.getUint32(co64.dataStart + 12 + i * 8, false);
+                            chunkOffsets.push(hi * 4294967296 + lo);
+                        }
+                    }
+
+                    const stscCount = view.getUint32(stsc.dataStart + 4, false);
+                    const stscEntries = [];
+                    for (let i = 0; i < stscCount; i++) {
+                        stscEntries.push({
+                            firstChunk: view.getUint32(stsc.dataStart + 8 + i * 12, false),
+                            samplesPerChunk: view.getUint32(stsc.dataStart + 12 + i * 12, false)
+                        });
+                    }
+
+                    const sampleDurations = [];
+                    if (stts) {
+                        const sttsCount = view.getUint32(stts.dataStart + 4, false);
+                        for (let i = 0; i < sttsCount; i++) {
+                            const cnt = view.getUint32(stts.dataStart + 8 + i * 8, false);
+                            const delta = view.getUint32(stts.dataStart + 12 + i * 8, false);
+                            for (let k = 0; k < cnt && sampleDurations.length < sampleCount; k++) {
+                                sampleDurations.push(delta);
+                            }
+                        }
+                    }
+
+                    const extracted = [];
+                    let sampleIdx = 0;
+                    let dtsTicks = 0;
+                    for (let c = 0; c < chunkOffsets.length && sampleIdx < sampleCount; c++) {
+                        const chunkNum = c + 1;
+                        let spc = 1;
+                        for (let e = 0; e < stscEntries.length; e++) {
+                            if (chunkNum >= stscEntries[e].firstChunk) {
+                                spc = stscEntries[e].samplesPerChunk;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let filePos = chunkOffsets[c];
+                        for (let s = 0; s < spc && sampleIdx < sampleCount; s++) {
+                            const sSize = sampleSizes[sampleIdx];
+                            const dur = sampleDurations[sampleIdx] || timescale;
+                            if (filePos + sSize <= len && sSize >= 26) {
+                                const tsMs = (dtsTicks / timescale) * 1000;
+                                const pt = decodeCammSamplePayload(view, filePos, sSize, tsMs);
+                                if (pt) extracted.push(pt);
+                            }
+                            filePos += sSize;
+                            dtsTicks += dur;
+                            sampleIdx++;
+                        }
+                    }
+
+                    if (extracted.length > 0) {
+                        return extracted;
+                    }
+                }
+            } catch (err) {
+                console.warn('ISO BMFF direct CAMM scan error:', err);
+            }
+            return [];
+        }
+
         function extractCammSamplesFromMp4Buffer(arrayBuffer) {
+            // 1. Check embedded CAMMJSON trailer (exported by this app)
             const trailerPoints = parseCammTrailerFromArrayBuffer(arrayBuffer);
             if (trailerPoints.length > 0) {
                 return Promise.resolve(trailerPoints);
             }
 
+            // 2. Try MP4Box.js standard meta/camm track demuxing
             return new Promise((resolve) => {
+                const finishWithFallback = (mp4boxPoints) => {
+                    if (mp4boxPoints && mp4boxPoints.length > 0) {
+                        mp4boxPoints.sort((a, b) => a.timestampOffsetMs - b.timestampOffsetMs);
+                        resolve(mp4boxPoints);
+                        return;
+                    }
+                    // 3. Fallback to direct ISO BMFF stbl/stco/stsz binary box scanner
+                    const directPoints = scanRawIsoBmffForCammPackets(arrayBuffer);
+                    resolve(directPoints);
+                };
+
                 if (typeof MP4Box === 'undefined') {
-                    resolve([]);
+                    finishWithFallback([]);
                     return;
                 }
 
@@ -1260,6 +1496,13 @@
                     let cammTrackId = null;
                     let cammTimescale = 1000;
                     let accumulatedTicks = 0;
+                    let settled = false;
+
+                    const done = () => {
+                        if (settled) return;
+                        settled = true;
+                        finishWithFallback(extracted);
+                    };
 
                     mp4boxfile.onReady = function (info) {
                         const tracks = info.tracks || [];
@@ -1270,13 +1513,13 @@
                         );
 
                         if (!cammTrack) {
-                            resolve([]);
+                            done();
                             return;
                         }
 
                         cammTrackId = cammTrack.id;
                         cammTimescale = cammTrack.timescale || 1000;
-                        mp4boxfile.setExtractionOptions(cammTrackId, null, { nbSamples: 50000 });
+                        mp4boxfile.setExtractionOptions(cammTrackId, null, { nbSamples: 100000 });
                         mp4boxfile.start();
                     };
 
@@ -1284,21 +1527,13 @@
                         if (id !== cammTrackId || !Array.isArray(samples)) return;
                         for (const s of samples) {
                             const data = s.data;
-                            if (data && data.byteLength >= 34) {
+                            if (data && data.byteLength >= 26) {
                                 const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-                                const packetType = view.getUint16(0, true);
-                                if (packetType === 5) {
-                                    const lat = view.getFloat64(2, true);
-                                    const lng = view.getFloat64(10, true);
-                                    const ele = view.getFloat64(18, true);
-                                    const speed = view.getFloat32(26, true);
-                                    const heading = view.getFloat32(30, true);
-                                    const dtsTicks = (typeof s.dts === 'number') ? s.dts : accumulatedTicks;
-                                    const timestampOffsetMs = (dtsTicks / cammTimescale) * 1000;
-
-                                    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-                                        extracted.push({ lat, lng, ele, speed, heading, timestampOffsetMs });
-                                    }
+                                const dtsTicks = (typeof s.dts === 'number') ? s.dts : accumulatedTicks;
+                                const timestampOffsetMs = (dtsTicks / cammTimescale) * 1000;
+                                const decoded = decodeCammSamplePayload(view, 0, data.byteLength, timestampOffsetMs);
+                                if (decoded) {
+                                    extracted.push(decoded);
                                 }
                             }
                             accumulatedTicks += (s.duration || 1000);
@@ -1306,21 +1541,25 @@
                     };
 
                     mp4boxfile.onError = function () {
-                        resolve(extracted);
+                        done();
                     };
 
-                    const copyBuf = arrayBuffer.slice(0);
-                    copyBuf.fileStart = 0;
-                    mp4boxfile.appendBuffer(copyBuf);
+                    // Feed buffer in 2MB chunks so large MP4 files with moov at the end are parsed reliably
+                    const chunkSize = 2 * 1024 * 1024;
+                    let offset = 0;
+                    while (offset < arrayBuffer.byteLength) {
+                        const end = Math.min(offset + chunkSize, arrayBuffer.byteLength);
+                        const slice = arrayBuffer.slice(offset, end);
+                        slice.fileStart = offset;
+                        mp4boxfile.appendBuffer(slice);
+                        offset = end;
+                    }
                     mp4boxfile.flush();
 
-                    setTimeout(() => {
-                        extracted.sort((a, b) => a.timestampOffsetMs - b.timestampOffsetMs);
-                        resolve(extracted);
-                    }, 250);
+                    setTimeout(done, 400);
                 } catch (err) {
                     console.warn('MP4Box CAMM extraction error:', err);
-                    resolve([]);
+                    finishWithFallback([]);
                 }
             });
         }
